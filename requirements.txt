@@ -7,3 +7,12 @@ openai==1.82.0
 pandas==2.2.3
 pydub==0.25.1
 requests==2.32.3
+
+# UI dependencies
+streamlit>=1.29.0
+
+# Custom audio processing dependencies
+openai-whisper>=20231117
+rapidfuzz>=3.0.0
+arabic-reshaper>=3.0.0
+python-bidi>=0.4.2

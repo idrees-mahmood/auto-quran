@@ -1,304 +1,162 @@
-# 🕌 AI Quran Video Composer
+# AI Quran Video Composer
 
-An intelligent Python tool that automatically generates beautiful Quran recitation videos by combining:
-
-- **Precise word-level audio timing** from Tarteel.ai metadata
-- **AI-powered background video selection** using OpenAI and Pexels API
-- **Synchronized Arabic text and English translations**
-- **Professional video composition** with MoviePy
-
-## ✨ Features
-
-- 🎯 **Word-level synchronization** - Each Arabic word appears exactly when recited
-- 🤖 **AI-powered backgrounds** - Intelligent selection of appropriate background videos
-- 🌍 **Multi-language support** - Arabic text with English translations
-- 🎨 **Customizable styling** - Fonts, colors, and layout options
-- 📱 **Social media ready** - Optimized 9:16 aspect ratio for mobile platforms
-- 🔊 **High-quality audio** - Supports multiple renowned reciters
+Generate beautiful Quran recitation videos with word-level synchronized text overlays and AI-selected background videos.
 
 ## 🎬 Example Videos
 
-<!-- Placeholder for example videos - these will be added to the repository -->
+- [Surah An-Nisa (4:134)](./examples/4-134-134-MAHMOUD_KHALIL_AL_HUSARY.mp4) - Mahmoud Khalil Al-Husary
+- [Surah Al-Hijr (15:2-5)](./examples/15-2-5-MUHAMMAD_AL_MINSHAWI.mp4) - Muhammad Al-Minshawi
+- [Surah Taha (20:124-126)](./examples/20-124-126-MAHMOUD_KHALIL_AL_HUSARY.mp4) - Mahmoud Khalil Al-Husary
 
-### Sample Outputs
+---
 
-- [Surah An-Nisa (4:134) - Mahmoud Khalil Al-Husary](./examples/4-134-134-MAHMOUD_KHALIL_AL_HUSARY.mp4) - "Whoever desires the reward of this world - then with Allah is the reward of this world and the Hereafter"
-- [Surah Al-Hijr (15:2-5) - Muhammad Al-Minshawi](./examples/15-2-5-MUHAMMAD_AL_MINSHAWI.mp4) - "The day will come when the disbelievers will certainly wish they had submitted to Allah"
-- [Surah Taha (20:124-126) - Mahmoud Khalil Al-Husary](./examples/20-124-126-MAHMOUD_KHALIL_AL_HUSARY.mp4) - "Whoever turns away from My Reminder will certainly have a miserable life"
+## ✨ Features
+
+- **Word-level synchronization** - Text appears in sync with recitation
+- **AI background selection** - Contextually appropriate video backgrounds
+- **Pre-processed reciters** - Mahmoud Khalil Al-Husary, Muhammad Al-Minshawi
+- **Custom audio support** - Process any Quran recitation with Whisper AI
+- **Test mode** - Preview videos without API costs
+
+---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-#### 1. Python 3.8+
-
-Make sure you have Python 3.8 or higher installed:
-
-```bash
-python --version
-```
-
-#### 2. FFmpeg (Required)
-
-FFmpeg is essential for video processing. Install it based on your operating system:
-
-**macOS (using Homebrew):**
-
-```bash
-brew install ffmpeg
-```
-
-**Ubuntu/Debian:**
-
-```bash
-sudo apt update
-sudo apt install ffmpeg
-```
-
-**Windows:**
-
-- Follow the detailed guide: [How to Install FFmpeg on Windows](https://www.geeksforgeeks.org/how-to-install-ffmpeg-on-windows/)
-
-**Verify FFmpeg installation:**
-
-```bash
-ffmpeg -version
-```
-
-#### 3. Google Chrome (Required)
-
-Google Chrome is required for the `html2image` library, which is used to generate text overlays for the videos. The library relies on Chromium for rendering HTML to images.
-
-**macOS:**
-
-```bash
-# Download from https://www.google.com/chrome/
-# Or install via Homebrew Cask
-brew install --cask google-chrome
-```
-
-**Ubuntu/Debian:**
-
-```bash
-# Download and install Chrome
-wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
-sudo apt update
-sudo apt install google-chrome-stable
-```
-
-**Windows:**
-
-- Download and install from [Google Chrome official website](https://www.google.com/chrome/)
-
-**Verify Chrome installation:**
-
-```bash
-google-chrome --version  # Linux/macOS
-# On Windows, check if Chrome is installed in Program Files
-```
-
-### Installation
-
-1. **Clone the repository:**
+### macOS (Recommended)
 
 ```bash
 git clone https://github.com/yourusername/Ai-Quran-Video-Compser.git
 cd Ai-Quran-Video-Compser
+./setup_macos.sh  # Installs all dependencies
+./launch_ui.sh    # Opens web UI at http://localhost:8501
 ```
 
-2. **Create a virtual environment (recommended):**
+### Manual Setup
+
+#### Prerequisites
+- Python 3.8+
+- FFmpeg: `brew install ffmpeg` (macOS) or `apt install ffmpeg` (Linux)
+- Google Chrome (for text rendering)
+
+#### Installation
 
 ```bash
+git clone https://github.com/yourusername/Ai-Quran-Video-Compser.git
+cd Ai-Quran-Video-Compser
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. **Install Python dependencies:**
-
-```bash
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-_Note: The requirements.txt file was automatically generated from the project's imports using `pipreqs` to ensure all necessary dependencies are included._
-
-4. **Set up API keys:**
-   - Get a [Pexels API key](https://www.pexels.com/api/) for background videos
-   - Get an [OpenAI API key](https://platform.openai.com/api-keys) for AI-powered content selection
-   - Update the API keys in the notebook or create environment variables
+---
 
 ## 📖 Usage
 
-### Basic Usage with Jupyter Notebook
+### Web UI (Easiest)
 
-1. **Open the main notebook:**
-
-   - Navigate to `video_gen.ipynb`
-   - Follow the step-by-step instructions in the notebook
-
-2. **Configure your video:**
-
-```python
-# Set your parameters
-surah_number = 1      # Surah Al-Fatiha
-aya_start = 1         # First verse
-aya_end = 7           # Last verse
-reciter = Reciter.MUHAMMAD_AL_MINSHAWI
+```bash
+./launch_ui.sh
 ```
 
-4. **Run the cells** to generate your video!
+1. **Video Generation Tab**: Select surah, ayahs, reciter → Generate
+2. **Custom Audio Tab**: Upload any recitation → Transcribe → Generate
+3. **Test Mode**: Enable to preview without API costs (black background)
 
-### Available Reciters
+See [UI_GUIDE.md](UI_GUIDE.md) for detailed instructions.
 
-Currently supported reciters:
+### Jupyter Notebooks (Advanced)
 
-- `Reciter.MAHMOUD_KHALIL_AL_HUSARY`
-- `Reciter.MUHAMMAD_AL_MINSHAWI`
-
-_More reciters can be added by downloading their metadata files from [Tarteel.ai resources](https://qul.tarteel.ai/resources/recitation). Make sure to select files with the "with segmentation" tag for proper word-level timing data._
-
-## 🏗️ Project Structure
-
+```bash
+jupyter notebook video_gen.ipynb  # For pre-processed audio
+jupyter notebook audio_processing.ipynb  # For custom audio
 ```
-Ai-Quran-Video-Compser/
-├── video_gen.ipynb              # Main video generation notebook
-├── data_processing.ipynb        # Data preprocessing utilities
-├── utils.py                     # Core utility functions
-├── quran_utils.py              # Quran-specific utilities
-├── pexel_utils.py              # Pexels API integration
-├── LLM_utils.py                # OpenAI API integration
-├── prompts.py                  # AI prompts for video selection
-├── data_processing_utils.py    # Audio data processing
-├── requirements.txt            # Python dependencies
-├── data/                       # Quran text and audio metadata
-│   ├── quran/                 # Quran text and translations
-│   ├── audio/                 # Reciter timestamp data
-│   └── fonts/                 # Arabic fonts
-├── temp/                       # Temporary processing files
-└── examples/                   # Example output videos (coming soon)
-```
+
+---
 
 ## ⚙️ Configuration
 
-### API Keys
+### API Keys (for Production Mode)
 
-Set your API keys in the notebook
+| Service | Purpose | Get Key |
+|---------|---------|---------|
+| OpenAI | AI background suggestions | [platform.openai.com](https://platform.openai.com/api-keys) |
+| Pexels | Background videos | [pexels.com/api](https://www.pexels.com/api/) |
 
-```python
-# In the notebook
-PEXELS_API_KEY = "your_pexels_api_key_here"
-OPENAI_API_KEY = "your_openai_api_key_here"
+Configure in UI sidebar or set in notebooks. Not needed for Test Mode.
+
+### Test Mode
+
+Generate videos with black backgrounds - no API keys required:
+- UI: Toggle "Test Mode" checkbox
+- Notebooks: Set `TEST_MODE = True`
+
+---
+
+## 📁 Project Structure
+
+```
+├── app.py                    # Streamlit web UI
+├── video_gen.ipynb          # Video generation notebook
+├── audio_processing.ipynb   # Custom audio processing
+├── utils.py                 # Video composition utilities
+├── audio_processing_utils.py # Whisper transcription
+├── alignment_utils.py       # Ayah detection & alignment
+├── data/
+│   ├── quran/              # Quran text & translations
+│   ├── audio/              # Reciter timestamp data
+│   └── fonts/              # Arabic fonts
+├── docs/                   # Documentation
+└── examples/               # Sample output videos
 ```
 
-### Video Settings
+---
 
-Customize your video output:
+## 🍎 Apple Silicon Optimization
 
-```python
-# Video dimensions (9:16 aspect ratio)
-width = 1080
-height = 1920
+On M1/M2/M3 Macs, transcription is 2-3x faster with MPS acceleration (automatic).
 
-# Font settings
-font_path = "data/fonts/Rakkas-Regular.ttf"
-font_size = 80
-
-# Colors
-bg_color = (0, 0, 0)      # Black background
-text_color = (255, 255, 255)  # White text
-```
-
-## 🔧 Advanced Features
-
-### Custom Background Videos
-
-The AI automatically selects appropriate background videos, but you can customize the selection criteria:
-
-```python
-# Modify video selection parameters
-orientation = VideoOrientation.LANDSCAPE
-quality = VideoQuality.HD
-selection_method = "best"  # or "random"
-```
-
-### Audio Processing
-
-Fine-tune audio synchronization:
-
-```python
-# Adjust silence detection parameters
-min_silence_len = 100    # milliseconds
-silence_thresh = -40     # dB
-padding = 50            # milliseconds
-```
+---
 
 ## ⚠️ Important Notes
 
-### Content Review
+- **Review generated videos** for Islamic compliance before publishing
+- **API costs apply** in Production Mode (~$0.10-0.50/video)
+- Background videos are from Pexels - verify content appropriateness
 
-**Please carefully review generated videos before use.** Background videos are sourced from external APIs and may occasionally contain content that requires manual verification for Islamic compliance.
+---
 
-### API Costs
+## 📚 Documentation
 
-- **Pexels API**: Free tier available with rate limits
-- **OpenAI API**: Pay-per-use pricing applies
+- [UI_GUIDE.md](UI_GUIDE.md) - User guide for web interface
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) - Developer documentation
+- [docs/TRANSCRIPTION_API.md](docs/TRANSCRIPTION_API.md) - Transcription API reference
+- [docs/REGRESSION_TESTS.md](docs/REGRESSION_TESTS.md) - Testing framework
 
-### Performance
-
-- Video generation can take several minutes depending on verse length
-- Ensure stable internet connection for API calls
-- Consider using SSD storage for faster processing
-
-## 🚀 Potential Enhancements
-
-The following features could significantly expand the project's capabilities:
-
-### 🤖 ML-Powered Audio Segmentation
-
-- **Automatic word detection**: Implement a machine learning model to detect word segments for any Quran audio file
-
-### 🎬 AI Video Generation
-
-- **Custom background creation**: Use video generation models to create contextually
-
-### 🎙️ Extended Reciter Library
-
-- **Popular reciters**: Add support for more renowned reciters
-
-### 🌐 Additional Features
-
-- **Multi-language translations**: Support for more languages (Urdu, French, Spanish, etc.)
+---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. Areas for improvement:
-
+Contributions welcome! Areas for improvement:
 - Additional reciter support
 - More language translations
 - Enhanced video effects
 - Performance optimizations
-- Better error handling
+
+---
 
 ## 📄 License
 
-This project is licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License - see the [LICENSE-CC-BY-NC-ND-4.0.md](LICENSE-CC-BY-NC-ND-4.0.md) file for details.
+[Creative Commons Attribution-NonCommercial-NoDerivatives 4.0](LICENSE-CC-BY-NC-ND-4.0.md)
 
-For commercial use, please contact the project maintainers.
+For commercial use, contact project maintainers.
+
+---
 
 ## 🙏 Acknowledgments
 
-- **[Tarteel.ai](https://qul.tarteel.ai/)** for providing precise Quran audio timing data
-- **[Pexels](https://www.pexels.com/)** for high-quality background videos
-- **OpenAI** for intelligent content selection
-- The Muslim developer community for inspiration and feedback
-
-## 📞 Support
-
-If you encounter any issues or have questions:
-
-1. Check the [Issues](https://github.com/yourusername/Ai-Quran-Video-Compser/issues) page
-2. Create a new issue with detailed information
-3. Include your Python version, OS, and error messages
+- [Tarteel.ai](https://qul.tarteel.ai/) - Quran audio timing data
+- [Pexels](https://www.pexels.com/) - Background videos
+- [OpenAI](https://openai.com/) - Whisper & GPT
 
 ---
 

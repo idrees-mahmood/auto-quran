@@ -1,0 +1,12 @@
+{
+  "name": "Surah 56 Ayahs 1-40",
+  "description": "Regression test for Surah 56:1-40",
+  "audio_path": "temp/custom_audio/Surah Al-Waqi'ah Verses 1 - 40  Shaykh Ali Salah Omar سورة الواقعة  الشيخ علي صلاح عمر.mp3",
+  "audio_hash": "95ce00c87a6e56f5",
+  "surah": 56,
+  "start_ayah": 1,
+  "end_ayah": 40,
+  "expected_ayah_count": 40,
+  "created_at": "2025-12-06T21:01:53.501467",
+  "transcription_file": "transcriptions/95ce00c87a6e56f5_Surah Al-Waqi_ah Verses 1 - 40  Shaykh Ali Salah O.json"
+}
