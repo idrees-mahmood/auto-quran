@@ -560,7 +560,8 @@ def detect_ayahs_workflow(
     status_text,
     start_ayah: int = 1,
     end_ayah: Optional[int] = None,
-    skip_preamble: bool = True
+    skip_preamble: bool = True,
+    allow_repetition: bool = False
 ) -> Optional[List[Dict]]:
     """
     Detect ayahs from transcribed words.
@@ -585,7 +586,8 @@ def detect_ayahs_workflow(
         
         if surah_hint:
             end_str = f" to {end_ayah}" if end_ayah else ""
-            status_text.text(f"⏳ Detecting ayahs from Surah {surah_hint}, Ayah {start_ayah}{end_str}...")
+            mode_str = " (repetition-aware)" if allow_repetition else ""
+            status_text.text(f"⏳ Detecting ayahs from Surah {surah_hint}, Ayah {start_ayah}{end_str}{mode_str}...")
         else:
             status_text.text("⏳ Detecting ayahs using sliding window...")
         progress_bar.progress(0.6)
@@ -597,7 +599,8 @@ def detect_ayahs_workflow(
             surah_hint=surah_hint,
             start_ayah=start_ayah,
             end_ayah=end_ayah,
-            skip_preamble=skip_preamble
+            skip_preamble=skip_preamble,
+            allow_repetition=allow_repetition
         )
         
         progress_bar.progress(1.0)
@@ -1158,12 +1161,35 @@ def main():
                     skip_preamble = True
                     st.caption("ℹ️ Searching all 114 surahs (slower but more flexible)")
                 
-                # Debug mode option
-                debug_mode = st.checkbox(
-                    "🔧 Debug Mode (Verbose Logging)",
-                    value=False,
-                    help="Enable detailed logging to see window scoring and matching decisions in terminal"
-                )
+                # Advanced options
+                with st.expander("⚙️ Advanced Options", expanded=False):
+                    col_adv1, col_adv2 = st.columns(2)
+                    
+                    with col_adv1:
+                        use_word_classification = st.checkbox(
+                            "🔤 Word-Level Classification",
+                            value=False,
+                            help="Maps each word to its exact position in the Quran. Enables accurate reference text output."
+                        )
+                        allow_repetition = st.checkbox(
+                            "🔁 Allow Repetitions",
+                            value=False,
+                            help="Enable segment-based repetition detection (for recitations where the Qari repeats ayahs)."
+                        )
+                    
+                    with col_adv2:
+                        debug_mode = st.checkbox(
+                            "🔧 Debug Mode",
+                            value=False,
+                            help="Enable detailed logging in terminal"
+                        )
+                    
+                    if use_word_classification:
+                        st.info("📌 Word-level: Each word mapped to exact Quran position with reference text.")
+                    if allow_repetition:
+                        st.info("📌 Repetition mode: Detects when the Qari goes back and repeats previous ayahs.")
+
+
                 
                 if st.button("🔍 Detect Ayahs", type="primary", use_container_width=True):
                     # Set logging level based on debug mode
@@ -1176,16 +1202,58 @@ def main():
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     
-                    detected_ayahs = detect_ayahs_workflow(
-                        transcribed_words=ss.transcribed_words,
-                        confidence_threshold=confidence_threshold,
-                        surah_hint=surah_hint,
-                        progress_bar=progress_bar,
-                        status_text=status_text,
-                        start_ayah=start_ayah,
-                        end_ayah=end_ayah,
-                        skip_preamble=skip_preamble
-                    )
+                    if use_word_classification and surah_hint:
+                        # Use word-level classification
+                        from alignment_utils import reconstruct_ayahs
+                        
+                        status_text.text("⏳ Classifying words...")
+                        progress_bar.progress(0.2)
+                        
+                        quran_data = load_quran_text("data/quran/quran.json")
+                        normalizer = ArabicNormalizer()
+                        
+                        ayah_detector = AyahDetector(
+                            quran_data=quran_data,
+                            normalizer=normalizer,
+                            confidence_threshold=confidence_threshold
+                        )
+                        
+                        status_text.text(f"⏳ Classifying words for Surah {surah_hint}...")
+                        progress_bar.progress(0.5)
+                        
+                        # Classify each word
+                        classifications = ayah_detector.classify_transcription_words(
+                            transcribed_words=ss.transcribed_words,
+                            surah=surah_hint,
+                            start_ayah=start_ayah,
+                            end_ayah=end_ayah,
+                            skip_preamble=skip_preamble
+                        )
+                        
+                        status_text.text("⏳ Reconstructing ayahs...")
+                        progress_bar.progress(0.8)
+                        
+                        # Reconstruct ayahs from classifications
+                        detected_ayahs = reconstruct_ayahs(classifications, quran_data)
+                        
+                        # Store classifications for later use
+                        ss.word_classifications = classifications
+                        
+                        progress_bar.progress(1.0)
+                        status_text.text(f"✓ Classified {len(classifications)} words → {len(detected_ayahs)} ayahs")
+                    else:
+                        # Use standard detection workflow
+                        detected_ayahs = detect_ayahs_workflow(
+                            transcribed_words=ss.transcribed_words,
+                            confidence_threshold=confidence_threshold,
+                            surah_hint=surah_hint,
+                            progress_bar=progress_bar,
+                            status_text=status_text,
+                            start_ayah=start_ayah,
+                            end_ayah=end_ayah,
+                            skip_preamble=skip_preamble,
+                            allow_repetition=allow_repetition
+                        )
                     
                     if detected_ayahs:
                         ss.detected_ayahs = detected_ayahs
@@ -1193,6 +1261,7 @@ def main():
                         
                         st.success(f"✅ Detected {len(detected_ayahs)} ayah segments")
                         st.info("👉 Proceed to the **Review & Align** tab")
+
                 
                 # Display detected ayahs if available
                 if ss.get('detected_ayahs'):
