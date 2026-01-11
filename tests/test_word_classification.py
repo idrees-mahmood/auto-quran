@@ -13,8 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from audio_processing_utils import TranscribedWord, load_quran_text
-from alignment_utils import AyahDetector, WordClassification, reconstruct_ayahs
+from src.audio_processing_utils import TranscribedWord, load_quran_text
+from src.alignment_utils import AyahDetector, WordClassification, reconstruct_ayahs
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)

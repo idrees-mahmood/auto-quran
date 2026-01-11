@@ -9,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from audio_processing_utils import TranscribedWord, load_quran_text
-from alignment_utils import AyahDetector, ArabicNormalizer, segment_by_pauses
+from src.audio_processing_utils import TranscribedWord, load_quran_text
+from src.alignment_utils import AyahDetector, ArabicNormalizer, segment_by_pauses
 
 def load_transcription(trans_path: str):
     with open(trans_path, 'r', encoding='utf-8') as f:

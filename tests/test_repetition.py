@@ -14,8 +14,8 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from audio_processing_utils import TranscribedWord, load_quran_text
-from alignment_utils import AyahDetector, segment_by_pauses, RecitationEvent
+from src.audio_processing_utils import TranscribedWord, load_quran_text
+from src.alignment_utils import AyahDetector, segment_by_pauses, RecitationEvent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')

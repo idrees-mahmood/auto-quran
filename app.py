@@ -21,16 +21,16 @@ import streamlit as st
 from streamlit import session_state as ss
 
 # Import project modules
-import utils
-from quran_utils import Reciter
-import LLM_utils
-import pexel_utils
-from audio_processing_utils import (
+from src import utils
+from src.quran_utils import Reciter
+from src import LLM_utils
+from src import pexel_utils
+from src.audio_processing_utils import (
     AudioPreprocessor, WhisperTranscriber, ArabicNormalizer,
     TranscribedWord, load_quran_text, compute_audio_hash,
     save_transcription_checkpoint, load_transcription_checkpoint
 )
-from alignment_utils import AyahDetector, WordAligner, convert_to_tarteel_format
+from src.alignment_utils import AyahDetector, WordAligner, convert_to_tarteel_format
 
 # Configure logging - ensure debug messages can be shown when enabled
 logging.basicConfig(
@@ -489,7 +489,7 @@ def transcribe_audio_workflow(
     
     Returns transcription result dict or None on failure.
     """
-    from audio_processing_utils import get_transcription_path
+    from src.audio_processing_utils import get_transcription_path
     
     try:
         # Compute audio file hash for cache validation
@@ -688,7 +688,7 @@ def export_tarteel_json(
     Returns True on success, False on failure.
     """
     try:
-        from audio_processing_utils import AyahMatch
+        from src.audio_processing_utils import AyahMatch
         
         # Convert aligned_ayahs dicts to AyahMatch objects
         ayah_matches = []
@@ -1204,7 +1204,7 @@ def main():
                     
                     if use_word_classification and surah_hint:
                         # Use word-level classification
-                        from alignment_utils import reconstruct_ayahs
+                        from src.alignment_utils import reconstruct_ayahs
                         
                         status_text.text("⏳ Classifying words...")
                         progress_bar.progress(0.2)
@@ -1364,7 +1364,7 @@ def main():
                         ayah_info = ss.aligned_ayahs[selected_idx]
                         
                         # Summary stats with normalized comparison
-                        from audio_processing_utils import ArabicNormalizer
+                        from src.audio_processing_utils import ArabicNormalizer
                         normalizer = ArabicNormalizer()
                         
                         total_words = len(ayah_info['word_alignments'])

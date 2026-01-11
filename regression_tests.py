@@ -160,7 +160,7 @@ def extract_words_from_transcription(transcription_data: Dict[str, Any]) -> List
     Extract TranscribedWord objects from Whisper transcription output.
     Handles both flat 'words' array and nested segments with words.
     """
-    from audio_processing_utils import TranscribedWord
+    from src.audio_processing_utils import TranscribedWord
     
     words = []
     
@@ -289,8 +289,8 @@ def capture_fixture(
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
     
     # Import processing modules
-    from audio_processing_utils import WhisperTranscriber, AudioPreprocessor
-    from alignment_utils import AyahDetector
+    from src.audio_processing_utils import WhisperTranscriber, AudioPreprocessor
+    from src.alignment_utils import AyahDetector
     
     # Get or create transcription
     trans_path = get_transcription_path(audio_path)
@@ -336,7 +336,7 @@ def capture_fixture(
         # Run detection
         if detected_ayahs is None:
             logger.info("Running ayah detection...")
-            from audio_processing_utils import load_quran_text
+            from src.audio_processing_utils import load_quran_text
             
             words = extract_words_from_transcription(transcription_data)
             
@@ -462,8 +462,8 @@ def run_fixture(fixture_path: Path) -> TestResult:
             )
         
         # Run detection
-        from audio_processing_utils import load_quran_text
-        from alignment_utils import AyahDetector
+        from src.audio_processing_utils import load_quran_text
+        from src.alignment_utils import AyahDetector
         
         words = extract_words_from_transcription(transcription_data)
         

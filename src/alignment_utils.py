@@ -14,7 +14,7 @@ from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass, field
 import logging
 
-from audio_processing_utils import (
+from src.audio_processing_utils import (
     TranscribedWord, AyahMatch, ArabicNormalizer, 
     load_quran_text
 )

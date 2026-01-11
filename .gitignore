@@ -175,6 +175,7 @@ cython_debug/
 
 # Repo specific files
 data/video/
+data/audio*
 *.mp3
 
 temp/

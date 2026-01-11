@@ -52,8 +52,42 @@ Custom audio → Whisper → Ayah detection → Word alignment → JSON → Vide
 | File | Purpose |
 |------|---------|
 | `regression_tests.py` | CLI for capture/run/list test fixtures |
+| `tests/test_repetition.py` | Test repetition-aware detection |
+| `tests/test_word_classification.py` | Test word-level classification |
 | `data/fixtures/` | Stored test cases |
 | `data/transcriptions/` | Cached Whisper outputs |
+
+## Detection Algorithms
+
+### Sequential (Default)
+Linear progression through ayahs. Best for standard recitations.
+```python
+detector.detect_ayahs_from_transcription(words, allow_repetition=False)
+```
+
+### Repetition-Aware
+Handles Qari repetitions with segment splitting.
+```python
+detector.detect_ayahs_from_transcription(words, allow_repetition=True)
+```
+Enable in UI: Advanced Options → "Allow Repetitions"
+
+### Word-Level Classification
+Maps each word to exact Quran position with accurate reference text.
+```python
+classifications = detector.classify_transcription_words(words, surah=8)
+ayahs = reconstruct_ayahs(classifications, quran_data)
+```
+Enable in UI: Advanced Options → "Word-Level Classification"
+
+## Key Dataclasses
+
+| Class | Location | Purpose |
+|-------|----------|---------|
+| `TranscribedWord` | `audio_processing_utils.py` | Word from Whisper |
+| `WordClassification` | `alignment_utils.py` | Word-to-Quran mapping |
+| `RecitationEvent` | `alignment_utils.py` | Detected ayah event |
+
 
 ## Data Formats
 

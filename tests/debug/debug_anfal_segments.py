@@ -17,8 +17,8 @@ from typing import List, Dict, Tuple, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from audio_processing_utils import TranscribedWord, load_quran_text
-from alignment_utils import (
+from src.audio_processing_utils import TranscribedWord, load_quran_text
+from src.alignment_utils import (
     AyahDetector, ArabicNormalizer, segment_by_pauses,
     WordClassification, reconstruct_ayahs
 )

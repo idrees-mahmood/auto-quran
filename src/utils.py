@@ -8,7 +8,7 @@ import sys
 import contextlib
 import io
 import sys
-from quran_utils import Reciter
+from src.quran_utils import Reciter
 import pandas as pd
 from IPython.display import HTML, display
 

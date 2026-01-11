@@ -3,7 +3,7 @@ from typing import List, Dict
 import openai
 from dataclasses import dataclass
 import xml.etree.ElementTree as ET
-import prompts
+from src import prompts
 
 @dataclass
 class VideoSuggestion:

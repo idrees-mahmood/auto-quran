@@ -4,7 +4,7 @@ import requests
 from typing import Optional, Dict, List, Union
 from dataclasses import dataclass
 from urllib.parse import urlparse
-import utils
+from src import utils
 
 @dataclass
 class VideoQuality:
