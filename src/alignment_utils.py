@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 class RecitationEvent:
     """
     A single occurrence of an ayah being recited.
-    
-    Supports repetition: the same ayah can appear multiple times with 
+
+    Supports repetition: the same ayah can appear multiple times with
     different occurrence numbers.
     """
     surah: int
@@ -51,7 +51,8 @@ class RecitationEvent:
     is_partial: bool = False         # True if only part of the ayah was recited
     partial_type: str = "full"       # "start", "middle", "end", "full"
     reference_word_count: int = 0    # Total words in the reference ayah
-    
+    event_type: str = "full"         # "full" | "partial" | "repetition" | "skip"
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "surah": self.surah,
@@ -64,7 +65,8 @@ class RecitationEvent:
             "word_indices": self.word_indices,
             "is_partial": self.is_partial,
             "partial_type": self.partial_type,
-            "reference_word_count": self.reference_word_count
+            "reference_word_count": self.reference_word_count,
+            "event_type": self.event_type,
         }
 
 
