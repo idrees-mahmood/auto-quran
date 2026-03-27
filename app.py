@@ -1404,6 +1404,7 @@ def main():
                     
                     if detected_ayahs:
                         ss.detected_ayahs = detected_ayahs
+                        ss.excluded_event_indices = set()   # reset on new detection
                         ss.current_step = 'align'
                         
                         st.success(f"✅ Detected {len(detected_ayahs)} ayah segments")
@@ -1459,11 +1460,16 @@ def main():
                 if st.button("🔗 Align All Words", type="primary", use_container_width=True):
                     progress_bar = st.progress(0)
                     status_text = st.empty()
-                    
+
                     quran_data = load_quran_text("data/quran/quran.json")
-                    
+
+                    _excluded = ss.get("excluded_event_indices", set())
+                    _ayahs_to_align = [
+                        a for i, a in enumerate(ss.detected_ayahs)
+                        if i not in _excluded
+                    ]
                     aligned_ayahs = align_words_workflow(
-                        detected_ayahs=ss.detected_ayahs,
+                        detected_ayahs=_ayahs_to_align,
                         transcribed_words=ss.transcribed_words,
                         quran_data=quran_data,
                         progress_bar=progress_bar,
