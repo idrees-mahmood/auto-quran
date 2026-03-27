@@ -23,7 +23,7 @@ Difficult recitations that cause failure today:
 
 1. Replace greedy local matching with a globally optimal alignment that is structurally immune to cascade failure.
 2. Remove dependence on pause-based segmentation as a correctness requirement.
-3. Detect and annotate stumbles, repetitions, and partial matches as first-class events.
+3. Detect and annotate repetitions and partial matches as first-class events; leave stumble vs deliberate repeat classification to the user.
 4. Surface annotated results clearly in the Streamlit UI.
 
 ### Out of Scope
@@ -96,8 +96,10 @@ This creates a sparse (banded) matrix. Default `band_width` = `max(15, total_ref
 | Move | Effect | Cost |
 |------|--------|------|
 | **MATCH** | Consume `ref_count(j)` words (±2 flex), advance to ayah `j+1` | `1 − similarity(i, j)` |
-| **SKIP_AYAH** | Advance to ayah `j+1` without consuming words | `0.40` (fixed penalty) |
+| **SKIP_AYAH** | Advance to ayah `j+1` without consuming words | `0.85` (high penalty — last resort only) |
 | **CONSUME_NOISE** | Consume 1 word, stay on ayah `j` | `0.15` per word |
+
+SKIP_AYAH is considered unlikely in practice (a sheikh skipping an ayah is unusual and usually a transcription/processing error). The high penalty of 0.85 means the DP will only take this move when no plausible MATCH or CONSUME_NOISE path exists. It exists to prevent the DP from getting permanently stuck rather than to model intentional skips.
 
 CONSUME_NOISE is allowed for up to `max_noise_run = min(8, ref_count(j))` consecutive words before MATCH must be attempted. This prevents the DP from treating an entire ayah as noise.
 
@@ -123,15 +125,12 @@ RawEvent(
 
 SKIP_AYAH transitions produce a `SkippedAyah` record (no timing, just an annotation).
 
-### Phase 5 — Repetition and Stumble Post-Processing
+### Phase 5 — Repetition Post-Processing
 
 After traceback, scan for these patterns in the raw event sequence:
 
-**Stumble detection:**
-If a MATCH event for ayah `j` is immediately preceded by ≥2 CONSUME_NOISE words AND the noise words have non-trivial similarity (>0.35) to ayah `j`, classify the noise region as a stumble on ayah `j`. The clean MATCH that follows is the primary event.
-
 **Repetition detection:**
-If a MATCH event for ayah `j` appears when ayah `j` has already been matched earlier in the sequence, it is a repetition. Increment `occurrence` counter. A repetition within 5 seconds of the previous match of the same ayah is treated as a stumble rather than a deliberate repetition (threshold is configurable).
+If a MATCH event for ayah `j` appears when ayah `j` has already been matched earlier in the sequence, it is a repetition. Increment `occurrence` counter. The algorithm does not attempt to classify whether a repetition was a stumble (mistake) or deliberate — that distinction is left to the user in the UI.
 
 **Partial detection:**
 A MATCH event is flagged as partial if `similarity_score < 0.55` or `consumed_words < ref_count(j) - 3`.
@@ -151,7 +150,7 @@ class RecitationEvent:
     confidence: float        # = similarity_score
     transcribed_text: str
     word_indices: Tuple[int, int]
-    event_type: str          # "full" | "partial" | "stumble" | "repetition" | "skip"
+    event_type: str          # "full" | "partial" | "repetition" | "skip"
     is_partial: bool         # True if event_type is "partial" — kept for backward compat
     reference_word_count: int
 ```
@@ -166,13 +165,11 @@ class RecitationEvent:
 |-----------|---------|-------------|
 | `band_width_ratio` | 0.15 | Band width as fraction of total expected words |
 | `band_width_min` | 15 | Minimum band width in words |
-| `skip_ayah_penalty` | 0.40 | DP cost for skipping an ayah |
+| `skip_ayah_penalty` | 0.85 | DP cost for skipping an ayah (high — last resort only) |
 | `noise_word_penalty` | 0.15 | DP cost per noise word consumed |
 | `max_noise_run` | 8 | Max consecutive noise words before forced MATCH attempt |
-| `stumble_time_threshold` | 5.0 | Seconds; repetition closer than this = stumble |
 | `partial_confidence_threshold` | 0.55 | Below this = partial event |
 | `confidence_threshold` | 0.65 | Minimum score for a MATCH to be accepted at all |
-| `stumble_similarity_min` | 0.35 | Minimum noise-region similarity to ayah to classify as stumble (vs pure noise) |
 
 ---
 
@@ -186,10 +183,9 @@ Replace the current flat table with two components stacked vertically:
 
 A horizontal bar spanning the full audio duration. Each ayah is a coloured block proportional to its duration. Colour encodes event type:
 - Green (`#2ecc71`) — full match
-- Orange (`#f39c12`) — repetition
-- Red (`#e74c3c`) — stumble
+- Orange (`#f39c12`) — repetition (user decides if stumble or deliberate)
 - Purple (`#9b59b6`) — partial
-- Grey — noise / skipped
+- Grey — skipped
 
 Clicking a block sets `st.session_state.selected_event_idx`, which the card list uses to highlight the corresponding card (Streamlit re-renders on state change — no native DOM scrolling needed).
 
@@ -201,7 +197,7 @@ A vertical list of cards, one per event. Each card shows:
 - Confidence score
 - Event type badge (colour-coded)
 
-Stumble and repetition cards include a user toggle: **Include in video / Exclude**. This decision is persisted in session state and respected during the alignment and export steps.
+Repetition cards include a user toggle: **Include in video / Exclude**. The user decides whether a given repetition was a stumble (exclude) or deliberate (include). This decision is persisted in session state and respected during the alignment and export steps.
 
 Low-confidence cards (< `confidence_threshold`) are visually distinct (dimmed border, warning icon).
 
@@ -243,5 +239,5 @@ Low-confidence cards (< `confidence_threshold`) are visually distinct (dimmed bo
 1. Existing regression tests pass unchanged with `mode="sequential"`.
 2. DTW mode matches all 40 ayahs in the Surah 56 fixture (currently 39/40).
 3. DTW mode correctly identifies and annotates repetitions in the Anfal fixture.
-4. A recitation with a deliberate mid-section stumble produces: stumble event flagged, clean re-read as primary match, no downstream misalignment.
+4. A recitation where a sheikh re-reads an ayah produces: repetition event flagged with `occurrence=2`, no downstream misalignment, user can include or exclude it.
 5. A recitation where one ayah is skipped produces: skip annotation for the missing ayah, all subsequent ayahs correctly aligned.
