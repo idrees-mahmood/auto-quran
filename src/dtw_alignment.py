@@ -98,3 +98,73 @@ def score_window(
         str_score = difflib.SequenceMatcher(None, window_text, ref_norm_text).ratio()
 
     return 0.7 * word_score + 0.3 * str_score
+
+
+def build_banded_similarity_matrix(
+    words: List[TranscribedWord],
+    ayah_corpus: Dict[int, Dict],
+    ayah_range: Tuple[int, int],
+    normalizer: ArabicNormalizer,
+    config: DTWConfig,
+) -> Dict[Tuple[int, int], Tuple[float, int]]:
+    """
+    Build a sparse similarity matrix for (word_position, ayah_num) pairs.
+
+    Only fills cells within a diagonal band around each ayah's expected
+    position (derived from the ayah range word counts). Cells outside the
+    band are never evaluated, ruling out long-range implausible alignments.
+
+    Args:
+        words:       Full list of transcribed words.
+        ayah_corpus: {ayah_num: {"norm_words": [...], "normalized": str, "count": int}}
+        ayah_range:  (start_ayah, end_ayah) inclusive.
+        normalizer:  ArabicNormalizer instance.
+        config:      DTWConfig instance.
+
+    Returns:
+        Dict mapping (word_pos, ayah_num) -> (best_score, best_window_size).
+        Only in-band cells are present.
+    """
+    start_ayah, end_ayah = ayah_range
+    ayahs = [j for j in range(start_ayah, end_ayah + 1) if j in ayah_corpus]
+    M = len(words)
+    if not ayahs or M == 0:
+        return {}
+
+    total_ref_words = sum(ayah_corpus[j]["count"] for j in ayahs)
+    if total_ref_words == 0:
+        return {}
+
+    band_width = max(config.band_width_min,
+                     int(total_ref_words * config.band_width_ratio))
+    logger.debug(f"Similarity matrix: band_width={band_width}, "
+                 f"total_ref={total_ref_words}, M={M}")
+
+    matrix: Dict[Tuple[int, int], Tuple[float, int]] = {}
+    cumulative_words = 0
+
+    for j in ayahs:
+        ref = ayah_corpus[j]
+        ref_count = ref["count"]
+        ref_norm_words = ref["norm_words"]
+        ref_norm_text = ref["normalized"]
+
+        expected_pos = int((cumulative_words / total_ref_words) * M)
+        cumulative_words += ref_count
+
+        band_start = max(0, expected_pos - band_width)
+        band_end = min(M - 1, expected_pos + band_width)
+
+        for i in range(band_start, band_end + 1):
+            best_score, best_w = 0.0, ref_count
+            min_w = max(1, ref_count - 2)
+            max_w = min(M - i, ref_count + 3)
+            for w_size in range(min_w, max_w + 1):
+                s = score_window(words[i: i + w_size],
+                                 ref_norm_words, ref_norm_text, normalizer)
+                if s > best_score:
+                    best_score, best_w = s, w_size
+            matrix[(i, j)] = (best_score, best_w)
+
+    logger.debug(f"Matrix built: {len(matrix)} cells for {len(ayahs)} ayahs")
+    return matrix

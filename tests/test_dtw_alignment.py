@@ -106,3 +106,59 @@ def test_score_window_low_for_unrelated_words():
     ref_text = " ".join(ref_norm)
     score = score_window(words, ref_norm, ref_text, normalizer)
     assert score < 0.4
+
+
+# Task 3: Banded Similarity Matrix Tests
+
+from typing import List, Tuple
+from src.dtw_alignment import build_banded_similarity_matrix
+
+
+def _make_corpus(pairs):
+    """pairs: [(ayah_num, word_list), ...]"""
+    normalizer = ArabicNormalizer()
+    corpus = {}
+    for num, words in pairs:
+        norm = [normalizer.normalize(w) for w in words]
+        corpus[num] = {
+            "norm_words": norm,
+            "normalized": " ".join(norm),
+            "count": len(words),
+        }
+    return corpus, normalizer
+
+
+def test_matrix_only_covers_band():
+    words = [_w(f"w{i}", i * 0.5, (i + 1) * 0.5) for i in range(30)]
+    corpus, normalizer = _make_corpus([
+        (1, ["w0", "w1", "w2"]),
+        (2, ["w10", "w11", "w12"]),
+    ])
+    config = DTWConfig(band_width_min=3, band_width_ratio=0.1)
+    matrix = build_banded_similarity_matrix(
+        words=words, ayah_corpus=corpus, ayah_range=(1, 2),
+        normalizer=normalizer, config=config,
+    )
+    # Ayah 2 expected near word 15 (half of 30); should NOT have entry at position 0
+    positions_ayah2 = [i for (i, j) in matrix if j == 2]
+    assert 0 not in positions_ayah2
+
+
+def test_matrix_high_score_at_matching_position():
+    normalizer = ArabicNormalizer()
+    words = [_w("الله", 0.0, 0.5), _w("اكبر", 0.5, 1.0),
+             _w("كتاب", 1.0, 1.5), _w("قلم", 1.5, 2.0)]
+    corpus = {
+        1: {
+            "norm_words": [normalizer.normalize("الله"), normalizer.normalize("اكبر")],
+            "normalized": "الله اكبر",
+            "count": 2,
+        }
+    }
+    config = DTWConfig(band_width_min=4)
+    matrix = build_banded_similarity_matrix(
+        words=words, ayah_corpus=corpus, ayah_range=(1, 1),
+        normalizer=normalizer, config=config,
+    )
+    score, _ = matrix.get((0, 1), (0.0, 2))
+    assert score > 0.7
