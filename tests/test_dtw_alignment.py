@@ -162,3 +162,65 @@ def test_matrix_high_score_at_matching_position():
     )
     score, _ = matrix.get((0, 1), (0.0, 2))
     assert score > 0.7
+
+
+from src.dtw_alignment import (
+    DTWConfig, build_banded_similarity_matrix, run_dp_alignment,
+)
+
+
+def test_dp_sequential_clean_path():
+    """Four ayahs, no noise, perfect match — path should be 4 MATCHes in order."""
+    ayah_words = [
+        (1, ["بسم", "الله", "الرحمن"]),
+        (2, ["رب", "العالمين"]),
+        (3, ["الرحمن", "الرحيم"]),
+        (4, ["مالك", "يوم", "الدين"]),
+    ]
+    corpus, normalizer = _make_corpus(ayah_words)
+    # Transcription = all ayah words concatenated in order
+    all_words = [w for _, ws in ayah_words for w in ws]
+    t = 0.0
+    trans = []
+    for word in all_words:
+        trans.append(_w(word, t, t + 0.5))
+        t += 0.5
+
+    config = DTWConfig(band_width_min=6)
+    matrix = build_banded_similarity_matrix(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 4),
+        normalizer=normalizer, config=config,
+    )
+    path = run_dp_alignment(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 4),
+        similarity_matrix=matrix, config=config,
+    )
+    matches = [m for m in path if m[0] == "MATCH"]
+    assert len(matches) == 4
+    assert [m[1] for m in matches] == [1, 2, 3, 4]
+
+
+def test_dp_absorbs_leading_noise():
+    """Two noise words before ayah 1 — should be consumed as NOISE."""
+    corpus, normalizer = _make_corpus([(1, ["الله", "اكبر"])])
+    trans = [
+        _w("اعوذ",  0.0, 0.3),   # noise
+        _w("بالله", 0.3, 0.6),   # noise
+        _w("الله",  0.6, 1.1),
+        _w("اكبر",  1.1, 1.6),
+    ]
+    config = DTWConfig(band_width_min=5)
+    matrix = build_banded_similarity_matrix(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 1),
+        normalizer=normalizer, config=config,
+    )
+    path = run_dp_alignment(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 1),
+        similarity_matrix=matrix, config=config,
+    )
+    matches = [m for m in path if m[0] == "MATCH"]
+    assert len(matches) == 1
+    # Match should start at word index 2
+    _, ayah_num, start_i, end_i, score = matches[0]
+    assert ayah_num == 1
+    assert start_i == 2

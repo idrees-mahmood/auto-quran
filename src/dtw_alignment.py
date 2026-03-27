@@ -168,3 +168,119 @@ def build_banded_similarity_matrix(
 
     logger.debug(f"Matrix built: {len(matrix)} cells for {len(ayahs)} ayahs")
     return matrix
+
+
+def run_dp_alignment(
+    words: List[TranscribedWord],
+    ayah_corpus: Dict[int, Dict],
+    ayah_range: Tuple[int, int],
+    similarity_matrix: Dict[Tuple[int, int], Tuple[float, int]],
+    config: DTWConfig,
+) -> List[Tuple]:
+    """
+    Find the globally optimal alignment path via dynamic programming.
+
+    States: (word_position i, ayah_column k)
+    Transitions:
+      MATCH(i→i+w, k→k+1)   consume w words, advance ayah (w from matrix)
+      SKIP_AYAH(i→i, k→k+1) skip ayah without consuming words (high penalty)
+      NOISE(i→i+n, k→k)     consume n words without advancing ayah
+
+    Args:
+        words:             Transcribed words.
+        ayah_corpus:       {ayah_num: {"count": int, ...}}
+        ayah_range:        (start_ayah, end_ayah) inclusive.
+        similarity_matrix: Output of build_banded_similarity_matrix.
+        config:            DTWConfig.
+
+    Returns:
+        List of move tuples (in chronological order):
+          ("MATCH",    ayah_num, start_idx, end_idx, score)
+          ("SKIP_AYAH", ayah_num)
+          ("NOISE",    start_idx, end_idx)
+    """
+    start_ayah, end_ayah = ayah_range
+    ayahs = [j for j in range(start_ayah, end_ayah + 1) if j in ayah_corpus]
+    if not ayahs:
+        return []
+
+    M = len(words)
+    N = len(ayahs)
+
+    # dp[i][k]     = minimum cost to reach (word_pos=i, ayah_col=k)
+    # parent[i][k] = (prev_i, prev_k, move_tuple)
+    dp = [[INF] * (N + 1) for _ in range(M + 1)]
+    parent: List[List[Optional[Tuple]]] = [[None] * (N + 1) for _ in range(M + 1)]
+    dp[0][0] = 0.0
+
+    for i in range(M + 1):
+        for k in range(N + 1):
+            if dp[i][k] == INF:
+                continue
+            cost = dp[i][k]
+            j = ayahs[k] if k < N else None  # current ayah (None if past end)
+
+            # --- MATCH ---
+            if j is not None:
+                cell = similarity_matrix.get((i, j))
+                if cell is not None:
+                    score, w_size = cell
+                    if score >= config.confidence_threshold:
+                        ni, nk = i + w_size, k + 1
+                        if ni <= M:
+                            ref_count = ayah_corpus[j]["count"]
+                            size_penalty = (
+                                abs(w_size - ref_count) * config.noise_word_penalty
+                            )
+                            c = cost + (1.0 - score) + size_penalty
+                            if c < dp[ni][nk]:
+                                dp[ni][nk] = c
+                                parent[ni][nk] = (
+                                    i, k, (_MATCH, j, i, ni, score)
+                                )
+
+            # --- SKIP_AYAH ---
+            if j is not None:
+                nk = k + 1
+                c = cost + config.skip_ayah_penalty
+                if c < dp[i][nk]:
+                    dp[i][nk] = c
+                    parent[i][nk] = (i, k, (_SKIP_AYAH, j))
+
+            # --- NOISE (consume 1..max_noise_run words) ---
+            if i < M:
+                for n in range(1, config.max_noise_run + 1):
+                    ni = i + n
+                    if ni > M:
+                        break
+                    c = cost + config.noise_word_penalty * n
+                    if c < dp[ni][k]:
+                        dp[ni][k] = c
+                        parent[ni][k] = (i, k, (_NOISE, i, ni))
+
+    # Find best terminal: prefer (M, N) but accept trailing skips/noise.
+    # Penalise partial ayah coverage so that a full path always beats a
+    # partial one even if the partial path has lower raw DP cost.
+    best_cost, best_end = INF, (M, N)
+    for ek in range(max(0, N - 3), N + 1):
+        skip_penalty = (N - ek) * config.skip_ayah_penalty
+        for ei in range(max(0, M - 10), M + 1):
+            effective = dp[ei][ek] + skip_penalty
+            if effective < best_cost:
+                best_cost, best_end = effective, (ei, ek)
+
+    # Traceback
+    moves: List[Tuple] = []
+    ci, ck = best_end
+    while parent[ci][ck] is not None:
+        pi, pk, move = parent[ci][ck]
+        moves.append(move)
+        ci, ck = pi, pk
+    moves.reverse()
+
+    n_match = sum(1 for m in moves if m[0] == _MATCH)
+    n_skip = sum(1 for m in moves if m[0] == _SKIP_AYAH)
+    n_noise = sum(1 for m in moves if m[0] == _NOISE)
+    logger.info(f"DP: cost={best_cost:.3f}, "
+                f"{n_match} MATCHes, {n_skip} SKIPs, {n_noise} NOISE moves")
+    return moves
