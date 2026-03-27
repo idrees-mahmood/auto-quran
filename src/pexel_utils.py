@@ -208,19 +208,19 @@ def select_video(
         videos = [video for video in videos if video.get("duration") >= duration]
     if len(videos) == 0:
         raise ValueError("No videos found matching the criteria")
-    match selection_method:
-        case "best":
-            return videos[0]["id"]
-        case "random":
-            return random.choice(videos)["id"]
-        case "offset":
-            if offset is None:
-                raise ValueError("Offset must be provided when selection_method is 'offset'")
-            if offset >= len(videos):
-                    return None
-            return videos[offset]["id"]
-        case _:
-            raise ValueError("Invalid selection_method. Must be one of: best, random, offset")
+
+    if selection_method == "best":
+        return videos[0]["id"]
+    elif selection_method == "random":
+        return random.choice(videos)["id"]
+    elif selection_method == "offset":
+        if offset is None:
+            raise ValueError("Offset must be provided when selection_method is 'offset'")
+        if offset >= len(videos):
+            return None
+        return videos[offset]["id"]
+    else:
+        raise ValueError("Invalid selection_method. Must be one of: best, random, offset")
     
 def select_and_download_video(
     api_key: str,

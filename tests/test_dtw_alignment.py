@@ -69,3 +69,40 @@ def test_recitation_event_defaults_to_full():
         word_indices=(0, 4),
     )
     assert event.event_type == "full"
+
+
+# Task 2: DTW Config and Scoring Tests
+
+from src.audio_processing_utils import ArabicNormalizer
+from src.dtw_alignment import DTWConfig, score_window
+
+
+def _w(text: str, start: float, end: float):
+    from src.audio_processing_utils import TranscribedWord
+    return TranscribedWord(word=text, start=start, end=end, confidence=1.0)
+
+
+def test_dtw_config_defaults():
+    cfg = DTWConfig()
+    assert cfg.skip_ayah_penalty == 0.85
+    assert cfg.noise_word_penalty == 0.15
+    assert cfg.band_width_min == 15
+    assert cfg.confidence_threshold == 0.65
+
+
+def test_score_window_high_for_matching_words():
+    normalizer = ArabicNormalizer()
+    words = [_w("الله", 0.0, 0.5), _w("اكبر", 0.5, 1.0)]
+    ref_norm = [normalizer.normalize("الله"), normalizer.normalize("اكبر")]
+    ref_text = " ".join(ref_norm)
+    score = score_window(words, ref_norm, ref_text, normalizer)
+    assert score > 0.8
+
+
+def test_score_window_low_for_unrelated_words():
+    normalizer = ArabicNormalizer()
+    words = [_w("الله", 0.0, 0.5), _w("اكبر", 0.5, 1.0)]
+    ref_norm = [normalizer.normalize("كتاب"), normalizer.normalize("قلم")]
+    ref_text = " ".join(ref_norm)
+    score = score_window(words, ref_norm, ref_text, normalizer)
+    assert score < 0.4
