@@ -224,3 +224,66 @@ def test_dp_absorbs_leading_noise():
     _, ayah_num, start_i, end_i, score = matches[0]
     assert ayah_num == 1
     assert start_i == 2
+
+
+from src.dtw_alignment import (
+    DTWConfig, build_banded_similarity_matrix,
+    run_dp_alignment, build_recitation_events,
+)
+from src.alignment_utils import RecitationEvent
+
+
+def test_build_events_sequential():
+    ayah_words = [(1, ["الله", "اكبر"]), (2, ["رب", "العالمين"])]
+    corpus, normalizer = _make_corpus(ayah_words)
+    trans = [
+        _w("الله", 0.0, 0.5), _w("اكبر", 0.5, 1.0),
+        _w("رب",   1.0, 1.5), _w("العالمين", 1.5, 2.0),
+    ]
+    config = DTWConfig(band_width_min=4)
+    matrix = build_banded_similarity_matrix(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 2),
+        normalizer=normalizer, config=config,
+    )
+    path = run_dp_alignment(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 2),
+        similarity_matrix=matrix, config=config,
+    )
+    events = build_recitation_events(
+        path=path, words=trans, surah=56,
+        ayah_corpus=corpus, normalizer=normalizer, config=config,
+    )
+    full = [e for e in events if e.event_type == "full"]
+    assert len(full) == 2
+    assert full[0].ayah == 1
+    assert full[1].ayah == 2
+    assert full[0].occurrence == 1
+    assert abs(full[0].start_time - 0.0) < 0.01
+    assert abs(full[1].end_time  - 2.0) < 0.01
+
+
+def test_build_events_detects_repetition():
+    """Ayah 1 spoken, then repeated. The repeat appears as NOISE to the DP
+    (ayah range is exhausted), and post-processing reclassifies it."""
+    corpus, normalizer = _make_corpus([(1, ["الله", "اكبر"])])
+    trans = [
+        _w("الله", 0.0, 0.5), _w("اكبر", 0.5, 1.0),   # first
+        _w("الله", 1.5, 2.0), _w("اكبر", 2.0, 2.5),   # repeat
+    ]
+    config = DTWConfig(band_width_min=5)
+    matrix = build_banded_similarity_matrix(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 1),
+        normalizer=normalizer, config=config,
+    )
+    path = run_dp_alignment(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 1),
+        similarity_matrix=matrix, config=config,
+    )
+    events = build_recitation_events(
+        path=path, words=trans, surah=56,
+        ayah_corpus=corpus, normalizer=normalizer, config=config,
+    )
+    reps = [e for e in events if e.event_type == "repetition"]
+    assert len(reps) >= 1
+    assert reps[0].ayah == 1
+    assert reps[0].occurrence == 2

@@ -284,3 +284,161 @@ def run_dp_alignment(
     logger.info(f"DP: cost={best_cost:.3f}, "
                 f"{n_match} MATCHes, {n_skip} SKIPs, {n_noise} NOISE moves")
     return moves
+
+
+def build_recitation_events(
+    path: List[Tuple],
+    words: List[TranscribedWord],
+    surah: int,
+    ayah_corpus: Dict[int, Dict],
+    normalizer: ArabicNormalizer,
+    config: DTWConfig,
+) -> List:
+    """
+    Convert a DP path into annotated RecitationEvent objects.
+
+    MATCH moves  -> "full" or "partial" events.
+    SKIP_AYAH    -> "skip" events (no timing).
+    NOISE regions-> checked against already-matched ayahs; strong match
+                   reclassified as "repetition" with incremented occurrence.
+
+    Args:
+        path:        Output of run_dp_alignment.
+        words:       Transcribed words (same list passed to run_dp_alignment).
+        surah:       Surah number.
+        ayah_corpus: {ayah_num: {"norm_words", "normalized", "count"}}
+        normalizer:  ArabicNormalizer instance.
+        config:      DTWConfig.
+
+    Returns:
+        List of RecitationEvent objects in time order.
+    """
+    # Import here to avoid circular import at module load time
+    from src.alignment_utils import RecitationEvent
+
+    events: List[RecitationEvent] = []
+    occurrence: Dict[int, int] = {}
+    matched_ayahs: List[int] = []   # ayahs already matched, in order
+
+    # ---- First pass: process MATCH and SKIP_AYAH moves ----
+    noise_regions: List[Tuple[int, int]] = []   # (start_i, end_i) of NOISE runs
+    prev_was_noise = False
+    noise_run_start = 0
+
+    for move in path:
+        mtype = move[0]
+
+        if mtype == _MATCH:
+            if prev_was_noise:
+                noise_regions.append((noise_run_start, move[2]))  # move[2] = start_i
+                prev_was_noise = False
+
+            _, ayah_num, start_i, end_i, score = move
+            ref_count = ayah_corpus[ayah_num]["count"]
+            occurrence[ayah_num] = occurrence.get(ayah_num, 0) + 1
+            occ = occurrence[ayah_num]
+
+            consumed = end_i - start_i
+            is_partial = (
+                score < config.partial_confidence_threshold
+                or consumed < ref_count - 3
+            )
+
+            if occ > 1:
+                evt_type = "repetition"
+            elif is_partial:
+                evt_type = "partial"
+            else:
+                evt_type = "full"
+
+            event_words = words[start_i:end_i]
+            events.append(RecitationEvent(
+                surah=surah,
+                ayah=ayah_num,
+                occurrence=occ,
+                start_time=event_words[0].start if event_words else 0.0,
+                end_time=event_words[-1].end if event_words else 0.0,
+                confidence=score,
+                transcribed_text=" ".join(w.word for w in event_words),
+                word_indices=(start_i, end_i),
+                is_partial=is_partial,
+                partial_type="partial" if is_partial else "full",
+                reference_word_count=ref_count,
+                event_type=evt_type,
+            ))
+            matched_ayahs.append(ayah_num)
+
+        elif mtype == _SKIP_AYAH:
+            if prev_was_noise:
+                # Close the noise region at the current position (no word index change)
+                noise_regions.append((noise_run_start, noise_run_start))
+                prev_was_noise = False
+            _, ayah_num = move
+            ref_count = ayah_corpus[ayah_num]["count"]
+            events.append(RecitationEvent(
+                surah=surah, ayah=ayah_num, occurrence=1,
+                start_time=0.0, end_time=0.0, confidence=0.0,
+                transcribed_text="", word_indices=(0, 0),
+                is_partial=True, partial_type="skip",
+                reference_word_count=ref_count, event_type="skip",
+            ))
+
+        elif mtype == _NOISE:
+            _, noise_s, noise_e = move
+            if not prev_was_noise:
+                noise_run_start = noise_s
+                prev_was_noise = True
+            # noise_e is the running end; captured when next non-NOISE arrives
+
+    # Capture trailing noise from explicit NOISE moves
+    if prev_was_noise and path:
+        last_noise = [m for m in path if m[0] == _NOISE]
+        if last_noise:
+            noise_regions.append((noise_run_start, last_noise[-1][2]))
+
+    # Capture words that come after all matched/noise regions (not in path at all)
+    last_covered = 0
+    for move in path:
+        if move[0] == _MATCH:
+            last_covered = max(last_covered, move[3])  # end_i
+        elif move[0] == _NOISE:
+            last_covered = max(last_covered, move[2])  # end_i
+    if last_covered < len(words):
+        noise_regions.append((last_covered, len(words)))
+
+    # ---- Second pass: check noise regions for repetitions ----
+    if matched_ayahs:
+        for noise_start, noise_end in noise_regions:
+            noise_words = words[noise_start:noise_end]
+            if len(noise_words) < 2:
+                continue
+            best_score, best_ayah = 0.0, None
+            for prev_ayah in set(matched_ayahs):
+                ref = ayah_corpus.get(prev_ayah)
+                if not ref:
+                    continue
+                s = score_window(
+                    noise_words, ref["norm_words"], ref["normalized"], normalizer
+                )
+                if s > best_score:
+                    best_score, best_ayah = s, prev_ayah
+
+            if best_ayah is not None and best_score >= config.confidence_threshold:
+                ref_count = ayah_corpus[best_ayah]["count"]
+                occurrence[best_ayah] = occurrence.get(best_ayah, 0) + 1
+                events.append(RecitationEvent(
+                    surah=surah, ayah=best_ayah,
+                    occurrence=occurrence[best_ayah],
+                    start_time=noise_words[0].start,
+                    end_time=noise_words[-1].end,
+                    confidence=best_score,
+                    transcribed_text=" ".join(w.word for w in noise_words),
+                    word_indices=(noise_start, noise_end),
+                    is_partial=False, partial_type="full",
+                    reference_word_count=ref_count,
+                    event_type="repetition",
+                ))
+
+    # Sort by start_time (skip events have 0.0; keep them stable)
+    events.sort(key=lambda e: (e.start_time, e.ayah))
+    return events
