@@ -287,3 +287,55 @@ def test_build_events_detects_repetition():
     assert len(reps) >= 1
     assert reps[0].ayah == 1
     assert reps[0].occurrence == 2
+
+
+# Task 6: Integration smoke test
+
+import json
+from pathlib import Path
+from src.audio_processing_utils import load_quran_text
+from src.alignment_utils import AyahDetector
+
+
+def test_dtw_mode_smoke_surah56():
+    """DTW mode runs on the Surah 56 fixture and detects >=35 full matches."""
+    base = Path(__file__).parent.parent
+    trans_path = (
+        base / "data/transcriptions/"
+               "95ce00c87a6e56f5_Surah Al-Waqi_ah Verses 1 - 40  Shaykh Ali Salah O.json"
+    )
+    quran_path = base / "data/quran/quran.json"
+
+    if not trans_path.exists():
+        import pytest; pytest.skip("Transcription fixture not available")
+
+    with open(trans_path) as f:
+        data = json.load(f)
+
+    from src.audio_processing_utils import TranscribedWord
+    words = []
+    for seg in data.get("transcription", data).get("segments", []):
+        for w in seg.get("words", []):
+            words.append(TranscribedWord(
+                word=w.get("word", "").strip(),
+                start=w.get("start", 0.0),
+                end=w.get("end", 0.0),
+                confidence=w.get("probability", w.get("confidence", 0.0)),
+            ))
+
+    quran_data = load_quran_text(str(quran_path))
+    detector = AyahDetector(quran_data=quran_data, confidence_threshold=0.65)
+
+    results = detector.detect_ayahs_from_transcription(
+        transcribed_words=words,
+        surah_hint=56,
+        start_ayah=1,
+        end_ayah=40,
+        mode="dtw",
+    )
+
+    full_matches = [r for r in results if r.get("event_type") == "full"]
+    assert len(full_matches) >= 35, (
+        f"Expected >=35 full matches, got {len(full_matches)}. "
+        f"All events: {[(r['ayah'], r.get('event_type')) for r in results]}"
+    )

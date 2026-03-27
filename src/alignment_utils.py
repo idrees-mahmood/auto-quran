@@ -25,6 +25,13 @@ try:
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
 
+from src.dtw_alignment import (
+    DTWConfig,
+    build_banded_similarity_matrix,
+    run_dp_alignment,
+    build_recitation_events,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -310,12 +317,13 @@ class AyahDetector:
         start_ayah: int = 1,
         end_ayah: Optional[int] = None,
         skip_preamble: bool = True,
-        allow_repetition: bool = False  # Enable for recitations with repeated ayahs
+        allow_repetition: bool = False,  # Enable for recitations with repeated ayahs
+        mode: str = "sequential",
     ) -> List[Dict[str, Any]]:
 
         """
         Detect ayahs from a continuous transcription.
-        
+
         Args:
             transcribed_words: List of transcribed words with timestamps
             window_size: Number of words to use for matching at a time
@@ -326,12 +334,23 @@ class AyahDetector:
             end_ayah: Ending ayah number (default None = until end of surah)
             skip_preamble: If True, skip isti'adha/basmallah at start
             allow_repetition: If True, use new repetition-aware algorithm (default)
-            
+            mode: Algorithm mode — "sequential" (default) or "dtw"
+
         Returns:
             List of detected ayah segments with timing info.
-            If allow_repetition=True, returns RecitationEvent-style dicts with
+            If allow_repetition=True or mode="dtw", returns RecitationEvent-style dicts with
             'occurrence' and 'is_partial' fields.
         """
+        if mode == "dtw" and surah_hint:
+            events = self.detect_ayahs_dtw(
+                transcribed_words=transcribed_words,
+                surah=surah_hint,
+                start_ayah=start_ayah,
+                end_ayah=end_ayah,
+                skip_preamble=skip_preamble,
+            )
+            return [e.to_dict() for e in events]
+
         if surah_hint:
             end_str = f" to {end_ayah}" if end_ayah else ""
             logger.info(f"Detecting ayahs from {len(transcribed_words)} words (Surah {surah_hint}, Ayah {start_ayah}{end_str})")
@@ -1010,7 +1029,103 @@ class AyahDetector:
         
         logger.info(f"Repetition-aware detection complete: {len(events)} events")
         return events
-    
+
+    def detect_ayahs_dtw(
+        self,
+        transcribed_words: List[TranscribedWord],
+        surah: int,
+        start_ayah: int = 1,
+        end_ayah: Optional[int] = None,
+        skip_preamble: bool = True,
+        config: Optional[DTWConfig] = None,
+    ) -> List:
+        """
+        DTW-based globally optimal ayah alignment.
+        """
+        if config is None:
+            config = DTWConfig(
+                confidence_threshold=self.confidence_threshold,
+                band_width_min=25,
+            )
+
+        max_ayah = max(
+            (a for (s, a) in self.corpus if s == surah),
+            default=286,
+        )
+        actual_end = end_ayah if end_ayah else max_ayah
+
+        logger.info(
+            f"DTW alignment: Surah {surah}, Ayahs {start_ayah}-{actual_end}, "
+            f"{len(transcribed_words)} words"
+        )
+
+        # Skip preamble
+        word_start = 0
+        if skip_preamble:
+            word_start = self._skip_opening_formulas(transcribed_words)
+            if word_start > 0:
+                logger.info(f"Skipped {word_start} preamble words")
+
+        working_words = transcribed_words[word_start:]
+
+        # Build per-ayah corpus for this range
+        ayah_corpus: Dict[int, Dict] = {}
+        for ayah_num in range(start_ayah, actual_end + 1):
+            data = self.corpus.get((surah, ayah_num))
+            if data:
+                norm_words = [self.normalizer.normalize(w) for w in data["words"]]
+                ayah_corpus[ayah_num] = {
+                    "norm_words": norm_words,
+                    "normalized": data["normalized"],
+                    "count": len(data["words"]),
+                    "display": data.get("display", ""),
+                }
+
+        if not ayah_corpus:
+            logger.warning(
+                f"No corpus data for Surah {surah} Ayahs {start_ayah}-{actual_end}"
+            )
+            return []
+
+        matrix = build_banded_similarity_matrix(
+            words=working_words,
+            ayah_corpus=ayah_corpus,
+            ayah_range=(start_ayah, actual_end),
+            normalizer=self.normalizer,
+            config=config,
+        )
+        path = run_dp_alignment(
+            words=working_words,
+            ayah_corpus=ayah_corpus,
+            ayah_range=(start_ayah, actual_end),
+            similarity_matrix=matrix,
+            config=config,
+        )
+        events = build_recitation_events(
+            path=path,
+            words=working_words,
+            surah=surah,
+            ayah_corpus=ayah_corpus,
+            normalizer=self.normalizer,
+            config=config,
+        )
+
+        # Adjust word_indices back to original offsets
+        for e in events:
+            e.word_indices = (
+                e.word_indices[0] + word_start,
+                e.word_indices[1] + word_start,
+            )
+
+        n_full = sum(1 for e in events if e.event_type == "full")
+        n_rep  = sum(1 for e in events if e.event_type == "repetition")
+        n_part = sum(1 for e in events if e.event_type == "partial")
+        logger.info(
+            f"DTW complete: {len(events)} events "
+            f"({n_full} full, {n_rep} repetitions, {n_part} partial)"
+        )
+        return events
+
     def _match_segment_to_ayahs(
         self,
         segment_words: List[TranscribedWord],
