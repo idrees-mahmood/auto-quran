@@ -552,6 +552,74 @@ def transcribe_audio_workflow(
         return None
 
 
+def render_alignment_timeline(detected_ayahs: List[Dict], total_duration: float) -> None:
+    """
+    Render a horizontal timeline bar showing detected ayah events.
+    Each ayah is a coloured block proportional to its duration.
+    Clicking a block sets st.session_state.selected_event_idx.
+    """
+    if not detected_ayahs or total_duration <= 0:
+        return
+
+    COLOURS = {
+        "full":       "#2ecc71",
+        "repetition": "#f39c12",
+        "partial":    "#9b59b6",
+        "skip":       "#555555",
+    }
+
+    blocks_html = ""
+    for idx, ayah in enumerate(detected_ayahs):
+        evt_type  = ayah.get("event_type", "full")
+        start     = ayah.get("start_time", 0.0)
+        end       = ayah.get("end_time",   0.0)
+        ayah_num  = ayah.get("ayah",       "?")
+        surah_num = ayah.get("surah",      "?")
+
+        if evt_type == "skip" or end <= start:
+            continue
+
+        left_pct  = (start / total_duration) * 100
+        width_pct = max(0.5, ((end - start) / total_duration) * 100)
+        colour    = COLOURS.get(evt_type, COLOURS["full"])
+
+        blocks_html += (
+            f'<div title="{surah_num}:{ayah_num} ({evt_type})" '
+            f'onclick="window.parent.postMessage({{type:\'streamlit:setComponentValue\', '
+            f'value:{idx}}}, \'*\')" '
+            f'style="position:absolute;left:{left_pct:.2f}%;width:{width_pct:.2f}%;'
+            f'height:100%;background:{colour};cursor:pointer;border-radius:2px;'
+            f'box-sizing:border-box;border:1px solid rgba(0,0,0,0.15);"></div>\n'
+        )
+
+    legend_html = ""
+    seen_types = {a.get("event_type", "full") for a in detected_ayahs}
+    for evt_type, colour in COLOURS.items():
+        if evt_type in seen_types:
+            legend_html += (
+                f'<span style="margin-right:12px;">'
+                f'<span style="background:{colour};display:inline-block;'
+                f'width:12px;height:12px;border-radius:2px;margin-right:4px;"></span>'
+                f'{evt_type}</span>'
+            )
+
+    html = f"""
+<div style="font-family:sans-serif;padding:4px 0;">
+  <div style="font-size:0.78em;color:#888;margin-bottom:4px;">
+    0:00 &nbsp;{'─' * 40}&nbsp; {int(total_duration // 60)}:{int(total_duration % 60):02d}
+  </div>
+  <div style="position:relative;height:28px;background:#1a1a2e;
+              border-radius:4px;overflow:hidden;">
+    {blocks_html}
+  </div>
+  <div style="margin-top:6px;font-size:0.78em;color:#aaa;">
+    {legend_html}
+  </div>
+</div>
+"""
+    st.components.v1.html(html, height=70)
+
+
 def detect_ayahs_workflow(
     transcribed_words: List[TranscribedWord],
     confidence_threshold: float,
