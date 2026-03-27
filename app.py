@@ -620,6 +620,69 @@ def render_alignment_timeline(detected_ayahs: List[Dict], total_duration: float)
     st.components.v1.html(html, height=70)
 
 
+def render_event_cards(detected_ayahs: list) -> None:
+    """
+    Render annotated cards for each recitation event.
+    Repetition cards have an Include/Exclude toggle persisted in session state.
+    """
+    if not detected_ayahs:
+        return
+
+    BADGE = {
+        "full":       "background:#27ae60;color:#fff",
+        "repetition": "background:#f39c12;color:#000",
+        "partial":    "background:#8e44ad;color:#fff",
+        "skip":       "background:#555;color:#fff",
+    }
+
+    if "excluded_event_indices" not in ss:
+        ss.excluded_event_indices = set()
+
+    for idx, ayah in enumerate(detected_ayahs):
+        evt_type  = ayah.get("event_type", "full")
+        ayah_num  = ayah.get("ayah", "?")
+        surah_num = ayah.get("surah", "?")
+        start     = ayah.get("start_time", 0.0)
+        end       = ayah.get("end_time", 0.0)
+        conf      = ayah.get("confidence", 0.0)
+        occ       = ayah.get("occurrence", 1)
+
+        badge     = BADGE.get(evt_type, BADGE["full"])
+        excluded  = idx in ss.excluded_event_indices
+        opacity   = "0.45" if excluded else "1.0"
+        is_sel    = (ss.get("selected_event_idx") == idx)
+        border    = "#2ecc71" if is_sel else ("#555" if excluded else "#333")
+
+        occ_str   = f" <em style='color:#888;font-size:0.85em;'>(#{occ})</em>" if occ > 1 else ""
+        conf_col  = "#2ecc71" if conf >= 0.85 else ("#f39c12" if conf >= 0.65 else "#e74c3c")
+
+        st.markdown(
+            f'<div style="border:1px solid {border};border-radius:6px;'
+            f'padding:8px 12px;margin-bottom:6px;opacity:{opacity};">'
+            f'<strong>{surah_num}:{ayah_num}</strong>{occ_str}&nbsp;&nbsp;'
+            f'<span style="padding:2px 7px;border-radius:10px;font-size:0.8em;{badge}">'
+            f'{evt_type}</span>'
+            f'&nbsp;&nbsp;<span style="color:#aaa;font-size:0.82em;">'
+            f'{start:.1f}s\u2013{end:.1f}s</span>'
+            f'&nbsp;&nbsp;<span style="color:{conf_col};font-size:0.82em;">'
+            f'conf:&nbsp;{conf:.0%}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        if evt_type == "repetition":
+            include = idx not in ss.excluded_event_indices
+            new_val = st.checkbox(
+                "Include in video",
+                value=include,
+                key=f"evt_include_{idx}",
+                help="Uncheck to exclude this repetition from the final video.",
+            )
+            if not new_val:
+                ss.excluded_event_indices.add(idx)
+            else:
+                ss.excluded_event_indices.discard(idx)
+
+
 def detect_ayahs_workflow(
     transcribed_words: List[TranscribedWord],
     confidence_threshold: float,
@@ -629,7 +692,8 @@ def detect_ayahs_workflow(
     start_ayah: int = 1,
     end_ayah: Optional[int] = None,
     skip_preamble: bool = True,
-    allow_repetition: bool = False
+    allow_repetition: bool = False,
+    mode: str = "sequential",
 ) -> Optional[List[Dict]]:
     """
     Detect ayahs from transcribed words.
@@ -668,7 +732,8 @@ def detect_ayahs_workflow(
             start_ayah=start_ayah,
             end_ayah=end_ayah,
             skip_preamble=skip_preamble,
-            allow_repetition=allow_repetition
+            allow_repetition=allow_repetition,
+            mode=mode,
         )
         
         progress_bar.progress(1.0)
@@ -1257,6 +1322,19 @@ def main():
                     if allow_repetition:
                         st.info("📌 Repetition mode: Detects when the Qari goes back and repeats previous ayahs.")
 
+                    st.markdown("---")
+                    st.selectbox(
+                        "Alignment mode",
+                        options=["sequential", "dtw"],
+                        index=0,
+                        key="alignment_mode",
+                        help=(
+                            "**sequential** — proven, fast, best for clean recordings. "
+                            "**dtw** — globally optimal, handles stumbles, repetitions, "
+                            "unusual pauses (slower)."
+                        ),
+                    )
+
 
                 
                 if st.button("🔍 Detect Ayahs", type="primary", use_container_width=True):
@@ -1320,7 +1398,8 @@ def main():
                             start_ayah=start_ayah,
                             end_ayah=end_ayah,
                             skip_preamble=skip_preamble,
-                            allow_repetition=allow_repetition
+                            allow_repetition=allow_repetition,
+                            mode=ss.get("alignment_mode", "sequential"),
                         )
                     
                     if detected_ayahs:
@@ -1334,52 +1413,35 @@ def main():
                 # Display detected ayahs if available
                 if ss.get('detected_ayahs'):
                     st.divider()
-                    st.subheader("🎯 Detected Ayahs")
-                    
-                    surah_names = get_surah_names()
-                    
-                    detection_data = []
-                    for i, ayah_info in enumerate(ss.detected_ayahs):
-                        surah = ayah_info['surah']
-                        ayah = ayah_info['ayah']
-                        confidence = ayah_info['confidence']
-                        
-                        # Confidence indicator
-                        if confidence >= 0.9:
-                            conf_icon = "🟢"
-                        elif confidence >= 0.7:
-                            conf_icon = "🟡"
-                        else:
-                            conf_icon = "🔴"
-                        
-                        detection_data.append({
-                            "#": i + 1,
-                            "Status": conf_icon,
-                            "Surah": f"{surah}. {surah_names.get(surah, 'Unknown')}",
-                            "Ayah": ayah,
-                            "Confidence": f"{confidence:.0%}",
-                            "Start": f"{ayah_info['start_time']:.1f}s",
-                            "End": f"{ayah_info['end_time']:.1f}s",
-                            "Duration": f"{ayah_info['end_time'] - ayah_info['start_time']:.1f}s"
-                        })
-                    
-                    st.dataframe(detection_data, use_container_width=True)
-                    
-                    # Flag low confidence matches
-                    low_conf = [d for d in ss.detected_ayahs if d['confidence'] < confidence_threshold]
+                    st.subheader("🎯 Alignment Results")
+
+                    total_dur = 0.0
+                    if ss.get("transcribed_words"):
+                        total_dur = ss.transcribed_words[-1].end
+
+                    render_alignment_timeline(ss.detected_ayahs, total_dur)
+                    st.markdown("---")
+                    render_event_cards(ss.detected_ayahs)
+
+                    # Summary metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    full_n  = sum(1 for d in ss.detected_ayahs if d.get("event_type") == "full")
+                    rep_n   = sum(1 for d in ss.detected_ayahs if d.get("event_type") == "repetition")
+                    part_n  = sum(1 for d in ss.detected_ayahs if d.get("event_type") == "partial")
+                    avg_c   = (sum(d["confidence"] for d in ss.detected_ayahs)
+                               / len(ss.detected_ayahs))
+                    col1.metric("Full matches", full_n)
+                    col2.metric("Repetitions",  rep_n)
+                    col3.metric("Partial",       part_n)
+                    col4.metric("Avg confidence", f"{avg_c:.0%}")
+
+                    low_conf = [d for d in ss.detected_ayahs
+                                if d["confidence"] < confidence_threshold]
                     if low_conf:
-                        st.warning(f"⚠️ {len(low_conf)} ayahs have low confidence (<{confidence_threshold:.0%}). Review carefully in next step.")
-                    
-                    # Summary statistics
-                    col_stat1, col_stat2, col_stat3 = st.columns(3)
-                    with col_stat1:
-                        st.metric("Total Ayahs", len(ss.detected_ayahs))
-                    with col_stat2:
-                        avg_conf = sum(d['confidence'] for d in ss.detected_ayahs) / len(ss.detected_ayahs)
-                        st.metric("Avg Confidence", f"{avg_conf:.0%}")
-                    with col_stat3:
-                        high_conf = len([d for d in ss.detected_ayahs if d['confidence'] >= 0.9])
-                        st.metric("High Confidence", high_conf)
+                        st.warning(
+                            f"⚠️ {len(low_conf)} ayahs below confidence threshold "
+                            f"({confidence_threshold:.0%}) — review before aligning."
+                        )
             
             else:
                 st.warning("⚠️ Please complete transcription first")
