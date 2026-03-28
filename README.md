@@ -31,14 +31,42 @@ cd Ai-Quran-Video-Compser
 ./launch_ui.sh    # Opens web UI at http://localhost:8501
 ```
 
+`setup_macos.sh` attempts `uv sync --extra dev` first, then falls back to `venv` + `pip` if needed.
+
 ### Manual Setup
 
+#### Preferred installer (recommended)
+
+```bash
+git clone https://github.com/yourusername/Ai-Quran-Video-Compser.git
+cd Ai-Quran-Video-Compser
+./install.sh
+```
+
+`install.sh` attempts `uv sync --extra dev` first, then falls back to `venv` + `pip` if needed.
+
 #### Prerequisites
-- Python 3.8+
+- Python 3.10+
 - FFmpeg: `brew install ffmpeg` (macOS) or `apt install ffmpeg` (Linux)
 - Google Chrome (for text rendering)
 
 #### Installation
+
+Recommended (`uv`):
+
+```bash
+git clone https://github.com/yourusername/Ai-Quran-Video-Compser.git
+cd Ai-Quran-Video-Compser
+uv sync --extra dev
+```
+
+Then run apps/commands with `uv run`, for example:
+
+```bash
+uv run streamlit run app.py
+```
+
+Classic `venv` + `pip`:
 
 ```bash
 git clone https://github.com/yourusername/Ai-Quran-Video-Compser.git
@@ -57,6 +85,8 @@ pip install -r requirements.txt
 ```bash
 ./launch_ui.sh
 ```
+
+`launch_ui.sh` now prefers `uv` automatically when available.
 
 1. **Video Generation Tab**: Select surah, ayahs, reciter → Generate
 2. **Custom Audio Tab**: Upload any recitation → Transcribe → Generate
@@ -131,6 +161,37 @@ On M1/M2/M3 Macs, transcription is 2-3x faster with MPS acceleration (automatic)
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) - Developer documentation
 - [docs/TRANSCRIPTION_API.md](docs/TRANSCRIPTION_API.md) - Transcription API reference
 - [docs/REGRESSION_TESTS.md](docs/REGRESSION_TESTS.md) - Testing framework
+
+## 🧰 Dependency Management
+
+This repository supports both:
+- `uv sync` (recommended)
+- `pip install -r requirements.txt` (legacy fallback)
+
+Maintenance policy:
+- `pyproject.toml` is the primary source of truth for dependencies
+- `requirements.txt` is maintained as a compatibility fallback for `pip` workflows
+
+Useful commands:
+
+```bash
+uv sync --extra dev
+uv run streamlit run app.py
+uv run python regression_tests.py run
+uv run pytest
+```
+
+Activate the uv environment in your current shell:
+
+```bash
+source .venv/bin/activate
+```
+
+Optional convenience alias for your shell profile:
+
+```bash
+alias uvsync='uv sync --extra dev && source .venv/bin/activate'
+```
 
 ---
 

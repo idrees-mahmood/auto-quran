@@ -752,9 +752,10 @@ class AyahDetector:
         # Check for basmallah after isti'adha (or at start if no isti'adha)
         remaining_words = first_words[skip_count:]
         if remaining_words and "بسم الله" in " ".join(remaining_words[:6]):
+            base_skip = skip_count  # save base before loop — loop must NOT accumulate
             for i, word in enumerate(remaining_words):
                 if word in {'بسم', 'الله', 'الرحمن', 'الرحيم'}:
-                    skip_count = skip_count + i + 1
+                    skip_count = base_skip + i + 1
                     # Stop after finding الرحيم or after 4 basmallah words
                     if word == 'الرحيم' or i >= 3:
                         break
@@ -1087,6 +1088,24 @@ class AyahDetector:
             )
             return []
 
+        # Auto-limit range when end_ayah was not provided.
+        # The band calculation assumes the transcription covers the full ayah range.
+        # When only part of the surah is recited (e.g. verses 1-40 of 96), running
+        # the full range places each ayah's expected word-position too early, pushing
+        # later ayahs completely outside their scoring band.
+        if end_ayah is None and len(working_words) > 0:
+            avg_words = sum(c["count"] for c in ayah_corpus.values()) / len(ayah_corpus)
+            # 1.3× buffer so a slightly faster recitation doesn't cut off the end
+            estimated_ayahs = int(len(working_words) / avg_words * 1.3) + 5
+            estimated_end = min(actual_end, start_ayah + estimated_ayahs - 1)
+            if estimated_end < actual_end:
+                logger.info(
+                    f"DTW: auto-limited end_ayah {actual_end}→{estimated_end} "
+                    f"({len(working_words)} working words ÷ {avg_words:.1f} avg/ayah)"
+                )
+                ayah_corpus = {k: v for k, v in ayah_corpus.items() if k <= estimated_end}
+                actual_end = estimated_end
+
         matrix = build_banded_similarity_matrix(
             words=working_words,
             ayah_corpus=ayah_corpus,
@@ -1110,7 +1129,14 @@ class AyahDetector:
             config=config,
         )
 
-        # Adjust word_indices back to original offsets
+        # Adjust word_indices back to original offsets and drop internal SKIP events.
+        # SKIP events are DP artifacts (no timing, word_indices=(0,0)); callers
+        # expect every returned event to have real word boundaries.
+        n_skip = sum(1 for e in events if e.event_type == "skip")
+        if n_skip:
+            logger.info(f"DTW: dropping {n_skip} internal SKIP events (unrecited ayahs)")
+        events = [e for e in events if e.event_type != "skip"]
+
         for e in events:
             e.word_indices = (
                 e.word_indices[0] + word_start,

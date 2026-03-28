@@ -1,3 +1,6 @@
+# Legacy pip fallback dependency list.
+# Primary dependency source of truth: pyproject.toml
+
 html2image==2.0.7
 ipython==8.27.0
 jupyter==1.1.1

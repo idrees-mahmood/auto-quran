@@ -75,6 +75,54 @@ else
     fi
 fi
 
+# Prefer uv when available
+if command -v uv &> /dev/null && [ -f "pyproject.toml" ]; then
+    echo ""
+    echo "⚡ Attempting uv sync first..."
+    set +e
+    uv sync --extra dev
+    uv_exit_code=$?
+    set -e
+
+    if [ "$uv_exit_code" -eq 0 ]; then
+        echo "✅ uv sync succeeded."
+
+        # Activate uv virtual environment for this script session.
+        if [ -f ".venv/bin/activate" ]; then
+            source .venv/bin/activate
+        fi
+
+        if [[ $USE_MPS == true ]]; then
+            echo ""
+            echo "Ensuring PyTorch with Metal (MPS) support..."
+            uv pip install torch torchvision torchaudio
+            echo "✓ PyTorch with MPS support installed"
+        fi
+
+        echo ""
+        echo "✅ Setup complete with uv!"
+        echo ""
+        echo "📝 Next steps:"
+        echo ""
+        echo "1. Activate in current shell (optional):"
+        echo "   source .venv/bin/activate"
+        echo ""
+        echo "2. Launch UI:"
+        echo "   streamlit run app.py"
+        echo ""
+        echo "3. For video generation notebook:"
+        echo "   jupyter notebook video_gen.ipynb"
+        echo ""
+        echo "4. For custom audio processing notebook:"
+        echo "   jupyter notebook audio_processing.ipynb"
+        echo ""
+        echo "🚀 Happy video generating!"
+        exit 0
+    else
+        echo "⚠️ uv sync failed (exit code: $uv_exit_code). Falling back to venv + pip..."
+    fi
+fi
+
 echo ""
 echo "Installing Python dependencies..."
 echo ""
@@ -117,6 +165,10 @@ echo "   jupyter notebook video_gen.ipynb"
 echo ""
 echo "3. For custom audio processing:"
 echo "   jupyter notebook audio_processing.ipynb"
+echo ""
+echo "💡 Tip: if you install uv, you can use"
+echo "   uv sync"
+echo "   uv run streamlit run app.py"
 echo ""
 echo "💡 Tips for macOS:"
 echo "   - TEST_MODE is enabled by default in video_gen.ipynb"

@@ -167,6 +167,14 @@ Note: Whisper may fall back to CPU due to sparse tensor limitations.
 ./setup_macos.sh
 ```
 
+Cross-platform recommended installer:
+
+```bash
+./install.sh
+```
+
+`install.sh` attempts `uv sync --extra dev` first, then falls back to `venv` + `pip` if uv is unavailable or sync fails.
+
 ## Common Development Tasks
 
 ### Adding a New Reciter
@@ -197,6 +205,27 @@ Edit `create_word_timed_video()` in `utils.py`:
 - `rapidfuzz` - Fuzzy matching
 - `streamlit` - Web UI
 - `html2image` - Text rendering
+
+### Dependency Management (uv)
+
+Primary dependency management is `uv`:
+
+```bash
+uv sync --extra dev
+```
+
+Run project commands with `uv run`:
+
+```bash
+uv run streamlit run app.py
+uv run python regression_tests.py run
+uv run pytest
+```
+
+Maintenance policy:
+- `pyproject.toml` is the primary source of truth for dependencies
+- `requirements.txt` is kept as a legacy `pip` fallback
+- When dependencies change, update `pyproject.toml` first, then align `requirements.txt` if needed
 
 ## API Keys
 

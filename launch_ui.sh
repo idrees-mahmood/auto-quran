@@ -8,6 +8,28 @@ set -e
 echo "🚀 Starting Quran Video Generator..."
 echo ""
 
+# Prefer uv-managed environments when available
+if command -v uv &> /dev/null && [ -f "pyproject.toml" ]; then
+    echo "📦 Using uv-managed environment..."
+    uv sync
+
+    # Activate uv virtual environment for this script session.
+    if [ -f ".venv/bin/activate" ]; then
+        source .venv/bin/activate
+    fi
+
+    echo "🌐 Launching UI..."
+    echo ""
+    echo "The application will open in your browser at:"
+    echo "  👉 http://localhost:8501"
+    echo ""
+    echo "Press Ctrl+C to stop the server."
+    echo ""
+
+    streamlit run app.py
+    exit 0
+fi
+
 # Check if virtual environment exists
 if [ ! -d "venv" ]; then
     echo "❌ Virtual environment not found!"
@@ -18,6 +40,9 @@ if [ ! -d "venv" ]; then
         echo "  python3 -m venv venv"
         echo "  source venv/bin/activate"
         echo "  pip install -r requirements.txt"
+        echo ""
+        echo "Or use uv (recommended):"
+        echo "  uv sync"
     fi
     exit 1
 fi

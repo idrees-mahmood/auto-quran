@@ -339,3 +339,84 @@ def test_dtw_mode_smoke_surah56():
         f"Expected >=35 full matches, got {len(full_matches)}. "
         f"All events: {[(r['ayah'], r.get('event_type')) for r in results]}"
     )
+
+
+def _load_surah56_words():
+    """Helper: load word list from the Surah 56 fixture."""
+    base = Path(__file__).parent.parent
+    trans_path = (
+        base / "data/transcriptions/"
+               "95ce00c87a6e56f5_Surah Al-Waqi_ah Verses 1 - 40  Shaykh Ali Salah O.json"
+    )
+    if not trans_path.exists():
+        return None
+    with open(trans_path) as f:
+        data = json.load(f)
+    from src.audio_processing_utils import TranscribedWord
+    words = []
+    for seg in data.get("transcription", data).get("segments", []):
+        for w in seg.get("words", []):
+            words.append(TranscribedWord(
+                word=w.get("word", "").strip(),
+                start=w.get("start", 0.0),
+                end=w.get("end", 0.0),
+                confidence=w.get("probability", w.get("confidence", 0.0)),
+            ))
+    return words
+
+
+def test_preamble_skip_does_not_consume_ayah1():
+    """Regression: _skip_opening_formulas must skip exactly 9 words (5 isti'adha
+    + 4 basmallah) and must NOT consume ayah-1 words 'إذا وقعت الواقعة'."""
+    words = _load_surah56_words()
+    if words is None:
+        import pytest; pytest.skip("Transcription fixture not available")
+
+    quran_data = load_quran_text(
+        str(Path(__file__).parent.parent / "data/quran/quran.json")
+    )
+    detector = AyahDetector(quran_data=quran_data)
+    skip = detector._skip_opening_formulas(words)
+
+    # Isti'adha (5) + basmallah (4) = 9. Must never exceed that.
+    assert skip == 9, (
+        f"Expected 9 preamble words skipped, got {skip}. "
+        f"Word at skip pos: '{words[skip].word}'"
+    )
+    # The first non-preamble word must be the start of ayah 1
+    first_content = words[skip].word
+    assert "إذا" in first_content or "اذا" in first_content, (
+        f"Expected ayah-1 start word 'إذا', got '{first_content}'"
+    )
+
+
+def test_dtw_no_end_ayah_finds_reasonable_matches():
+    """Regression: DTW with end_ayah=None (full surah) must still find most of
+    the recited ayahs via auto-range inference — no SKIP events returned."""
+    words = _load_surah56_words()
+    if words is None:
+        import pytest; pytest.skip("Transcription fixture not available")
+
+    quran_data = load_quran_text(
+        str(Path(__file__).parent.parent / "data/quran/quran.json")
+    )
+    detector = AyahDetector(quran_data=quran_data, confidence_threshold=0.65)
+
+    results = detector.detect_ayahs_from_transcription(
+        transcribed_words=words,
+        surah_hint=56,
+        start_ayah=1,
+        end_ayah=None,  # most common user case — must not break scoring
+        mode="dtw",
+    )
+
+    # No SKIP events must leak out to callers
+    skip_events = [r for r in results if r.get("event_type") == "skip"]
+    assert skip_events == [], f"SKIP events must not be returned: {skip_events}"
+
+    # Auto-range should still find a substantial portion of the recitation
+    full_matches = [r for r in results if r.get("event_type") == "full"]
+    assert len(full_matches) >= 25, (
+        f"Expected >=25 full matches with end_ayah=None, got {len(full_matches)}. "
+        f"Events: {[(r['ayah'], r.get('event_type')) for r in results]}"
+    )
