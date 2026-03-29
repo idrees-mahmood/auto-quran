@@ -158,7 +158,7 @@ def build_banded_similarity_matrix(
         for i in range(band_start, band_end + 1):
             best_score, best_w = 0.0, ref_count
             min_w = max(1, ref_count - 2)
-            max_w = min(M - i, ref_count + 3)
+            max_w = min(M - i, ref_count * 2)
             for w_size in range(min_w, max_w + 1):
                 s = score_window(words[i: i + w_size],
                                  ref_norm_words, ref_norm_text, normalizer)

@@ -420,3 +420,73 @@ def test_dtw_no_end_ayah_finds_reasonable_matches():
         f"Expected >=25 full matches with end_ayah=None, got {len(full_matches)}. "
         f"Events: {[(r['ayah'], r.get('event_type')) for r in results]}"
     )
+
+
+# Task 1 regression: wider window covers intra-ayah phrase repetition
+def test_wider_window_covers_intra_repeat():
+    """
+    Ayah 2 has 6 reference words. The transcription doubles every word (each
+    word repeated twice consecutively), giving 12 transcription words for ayah 2.
+
+    With max_w = ref_count + 3 = 9 the matrix can only evaluate windows up to
+    width 9. The best score reachable within that cap is ~0.776, which falls
+    below confidence_threshold=0.85, so no MATCH event is produced for ayah 2.
+
+    With max_w = ref_count * 2 = 12 the matrix scores the full 12-word window
+    (~0.906 >= 0.85) and the DP produces a full MATCH event for ayah 2.
+
+    This test verifies that the fix (ref_count * 2) is required to detect the
+    ayah when the reciter doubles each word.
+    """
+    from src.dtw_alignment import (
+        build_banded_similarity_matrix, run_dp_alignment,
+        build_recitation_events, DTWConfig,
+    )
+    from src.audio_processing_utils import ArabicNormalizer
+
+    normalizer = ArabicNormalizer()
+
+    # Ayah 2 reference: 6 distinct words
+    ayah2_ref = ["ا", "ب", "ت", "ث", "ج", "ح"]
+
+    corpus = {
+        1: {"norm_words": ["خ", "د", "ذ"],
+            "normalized": "خ د ذ", "count": 3},
+        2: {"norm_words": ayah2_ref,
+            "normalized": " ".join(ayah2_ref), "count": 6},
+    }
+
+    # Transcription: ayah1 clean (3 words) | ayah2 with each word doubled (12 words)
+    # Total: 3 + 12 = 15 words
+    raw = ["خ", "د", "ذ"]  # ayah 1 (clean)
+    for word in ayah2_ref:
+        raw.extend([word, word])  # each ayah2 word doubled
+
+    t = 0.0
+    trans = []
+    for word in raw:
+        trans.append(_w(word, t, t + 0.5))
+        t += 0.5
+
+    # confidence_threshold=0.85: old cap (ref_count+3=9) yields max score ~0.776
+    # which is below 0.85 -> no MATCH for ayah 2.
+    # New cap (ref_count*2=12) yields ~0.906 >= 0.85 -> MATCH produced.
+    config = DTWConfig(band_width_min=15, confidence_threshold=0.85)
+    matrix = build_banded_similarity_matrix(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 2),
+        normalizer=normalizer, config=config,
+    )
+    path = run_dp_alignment(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 2),
+        similarity_matrix=matrix, config=config,
+    )
+    events = build_recitation_events(
+        path=path, words=trans, surah=99, ayah_corpus=corpus,
+        normalizer=normalizer, config=config,
+    )
+
+    ayah2_events = [e for e in events if e.ayah == 2 and e.event_type == "full"]
+    assert ayah2_events, (
+        "Expected at least one full event for ayah 2. "
+        "The wider window (ref_count*2) is required to score the doubled-word recitation."
+    )
