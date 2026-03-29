@@ -490,3 +490,70 @@ def test_wider_window_covers_intra_repeat():
         "Expected at least one full event for ayah 2. "
         "The wider window (ref_count*2) is required to score the doubled-word recitation."
     )
+
+
+# Task 2 regression: noise second-pass emits multiple repetition events
+def test_noise_second_pass_splits_block_repetition():
+    """
+    Ayahs 1 and 2 are matched cleanly in the first pass. A trailing noise
+    region contains first ayah-1 content then ayah-2 content.
+    The greedy second-pass must emit exactly 2 repetition events, one for
+    each previously-seen ayah, with non-overlapping word_indices.
+    """
+    from src.dtw_alignment import (
+        build_banded_similarity_matrix, run_dp_alignment,
+        build_recitation_events, DTWConfig,
+    )
+    from src.audio_processing_utils import ArabicNormalizer
+
+    normalizer = ArabicNormalizer()
+
+    corpus = {
+        1: {"norm_words": ["ا", "ب", "ت"],
+            "normalized": "ا ب ت", "count": 3},
+        2: {"norm_words": ["ج", "د", "ه"],
+            "normalized": "ج د ه", "count": 3},
+    }
+
+    # Transcription: ayah1 | ayah2 | ayah1 again | ayah2 again
+    raw = ["ا", "ب", "ت",   # ayah 1 first pass
+           "ج", "د", "ه",   # ayah 2 first pass
+           "ا", "ب", "ت",   # ayah 1 repeated (noise region)
+           "ج", "د", "ه"]   # ayah 2 repeated (noise region)
+    t = 0.0
+    trans = []
+    for word in raw:
+        trans.append(_w(word, t, t + 0.5))
+        t += 0.5
+
+    config = DTWConfig(band_width_min=12, confidence_threshold=0.55)
+    matrix = build_banded_similarity_matrix(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 2),
+        normalizer=normalizer, config=config,
+    )
+    path = run_dp_alignment(
+        words=trans, ayah_corpus=corpus, ayah_range=(1, 2),
+        similarity_matrix=matrix, config=config,
+    )
+    events = build_recitation_events(
+        path=path, words=trans, surah=99, ayah_corpus=corpus,
+        normalizer=normalizer, config=config,
+    )
+
+    rep_events = [e for e in events if e.event_type == "repetition"]
+    assert len(rep_events) >= 2, (
+        f"Expected >=2 repetition events, got {len(rep_events)}. "
+        f"All events: {[(e.ayah, e.event_type, e.word_indices) for e in events]}"
+    )
+
+    # Both ayahs should appear as repetitions
+    rep_ayahs = {e.ayah for e in rep_events}
+    assert 1 in rep_ayahs, f"Ayah 1 not in repetitions: {rep_ayahs}"
+    assert 2 in rep_ayahs, f"Ayah 2 not in repetitions: {rep_ayahs}"
+
+    # word_indices must not overlap
+    sorted_reps = sorted(rep_events, key=lambda e: e.word_indices[0])
+    for a, b in zip(sorted_reps, sorted_reps[1:]):
+        assert a.word_indices[1] <= b.word_indices[0], (
+            f"Overlapping repetition events: {a.word_indices} and {b.word_indices}"
+        )

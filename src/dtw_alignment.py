@@ -406,38 +406,54 @@ def build_recitation_events(
     if last_covered < len(words):
         noise_regions.append((last_covered, len(words)))
 
-    # ---- Second pass: check noise regions for repetitions ----
+    # ---- Second pass: greedy sub-segmentation of noise regions ----
+    # Each noise region is scanned left-to-right. At each pointer position we
+    # try every previously-matched ayah over windows of [rc-2, rc*2] words.
+    # The best-scoring window that meets confidence_threshold becomes a
+    # repetition event; the pointer advances past it. This lets a single noise
+    # region produce 1-N repetition events (fixing multi-ayah block repeats).
     if matched_ayahs:
+        prev_ayahs_sorted = sorted(set(matched_ayahs))  # stable order
         for noise_start, noise_end in noise_regions:
-            noise_words = words[noise_start:noise_end]
-            if len(noise_words) < 2:
+            if noise_end - noise_start < 2:
                 continue
-            best_score, best_ayah = 0.0, None
-            for prev_ayah in set(matched_ayahs):
-                ref = ayah_corpus.get(prev_ayah)
-                if not ref:
-                    continue
-                s = score_window(
-                    noise_words, ref["norm_words"], ref["normalized"], normalizer
-                )
-                if s > best_score:
-                    best_score, best_ayah = s, prev_ayah
+            ptr = noise_start
+            while ptr < noise_end:
+                best_score, best_ayah, best_w = 0.0, None, 0
+                for prev_ayah in prev_ayahs_sorted:
+                    ref = ayah_corpus.get(prev_ayah)
+                    if not ref:
+                        continue
+                    rc = ref["count"]
+                    w_min = max(2, rc - 2)
+                    w_max = min(noise_end - ptr, rc * 2)
+                    for w in range(w_min, w_max + 1):
+                        s = score_window(
+                            words[ptr: ptr + w],
+                            ref["norm_words"], ref["normalized"], normalizer,
+                        )
+                        if s > best_score:
+                            best_score, best_ayah, best_w = s, prev_ayah, w
 
-            if best_ayah is not None and best_score >= config.confidence_threshold:
-                ref_count = ayah_corpus[best_ayah]["count"]
-                occurrence[best_ayah] = occurrence.get(best_ayah, 0) + 1
-                events.append(RecitationEvent(
-                    surah=surah, ayah=best_ayah,
-                    occurrence=occurrence[best_ayah],
-                    start_time=noise_words[0].start,
-                    end_time=noise_words[-1].end,
-                    confidence=best_score,
-                    transcribed_text=" ".join(w.word for w in noise_words),
-                    word_indices=(noise_start, noise_end),
-                    is_partial=False, partial_type="full",
-                    reference_word_count=ref_count,
-                    event_type="repetition",
-                ))
+                if best_ayah is not None and best_score >= config.confidence_threshold:
+                    ref_count = ayah_corpus[best_ayah]["count"]
+                    occurrence[best_ayah] = occurrence.get(best_ayah, 0) + 1
+                    rep_words = words[ptr: ptr + best_w]
+                    events.append(RecitationEvent(
+                        surah=surah, ayah=best_ayah,
+                        occurrence=occurrence[best_ayah],
+                        start_time=rep_words[0].start,
+                        end_time=rep_words[-1].end,
+                        confidence=best_score,
+                        transcribed_text=" ".join(w.word for w in rep_words),
+                        word_indices=(ptr, ptr + best_w),
+                        is_partial=False, partial_type="full",
+                        reference_word_count=ref_count,
+                        event_type="repetition",
+                    ))
+                    ptr += best_w
+                else:
+                    ptr += 1  # no good match at this position — advance silently
 
     # Sort by start_time (skip events have 0.0; keep them stable)
     events.sort(key=lambda e: (e.start_time, e.ayah))
