@@ -557,3 +557,110 @@ def test_noise_second_pass_splits_block_repetition():
         assert a.word_indices[1] <= b.word_indices[0], (
             f"Overlapping repetition events: {a.word_indices} and {b.word_indices}"
         )
+
+
+def _load_anfal_words():
+    """Load TranscribedWord list from the Anfal fixture. Returns None if missing."""
+    from src.audio_processing_utils import TranscribedWord
+    fixture = (
+        Path(__file__).parent.parent
+        / "src/data/transcriptions"
+        / "7c82281ffe342bba_Sheikh Musa Anfal_processed.wav.json"
+    )
+    if not fixture.exists():
+        return None
+    with open(fixture) as f:
+        data = json.load(f)
+    words = []
+    for seg in data.get("transcription", data).get("segments", []):
+        for w in seg.get("words", []):
+            words.append(TranscribedWord(
+                word=w.get("word", "").strip(),
+                start=w.get("start", 0.0),
+                end=w.get("end", 0.0),
+                confidence=w.get("probability", w.get("confidence", 0.0)),
+            ))
+    return words
+
+
+def test_dtw_anfal_ayah4_block_repetition():
+    """
+    Integration: Sheikh recites ayahs 2->3->4->5 then repeats ayahs 2->3->4.
+    After both fixes, each of ayahs 2, 3, 4 must appear with at least one
+    event where occurrence >= 2 (i.e. the repeated block is detected).
+    """
+    import pytest
+    words = _load_anfal_words()
+    if words is None:
+        pytest.skip("Anfal fixture not available")
+
+    from src.audio_processing_utils import load_quran_text
+    from src.alignment_utils import AyahDetector
+
+    quran_data = load_quran_text(
+        str(Path(__file__).parent.parent / "data/quran/quran.json")
+    )
+    detector = AyahDetector(quran_data=quran_data, confidence_threshold=0.65)
+
+    results = detector.detect_ayahs_from_transcription(
+        transcribed_words=words,
+        surah_hint=8,
+        start_ayah=1,
+        end_ayah=None,  # full surah: proportional band placement is correct
+        mode="dtw",
+    )
+
+    # Each of ayahs 2, 3, 4 must appear with occurrence >= 2
+    for target_ayah in [2, 3, 4]:
+        repeated = [
+            r for r in results
+            if r["ayah"] == target_ayah and r.get("occurrence", 1) >= 2
+        ]
+        assert repeated, (
+            f"Ayah {target_ayah} has no repetition event (occurrence>=2). "
+            f"All events for ayah {target_ayah}: "
+            f"{[r for r in results if r['ayah'] == target_ayah]}"
+        )
+
+
+def test_dtw_anfal_ayah10_intra_repeat():
+    """
+    Integration: Ayah 10 of Surah Anfal has 18 reference words. The sheikh
+    repeats a 6-word phrase mid-ayah, making the real span ~24 words. After
+    the max_w fix, all events for ayah 10 combined must span >= 20 words,
+    confirming the ending words 'inn allah aziz hakim' are captured within the
+    ayah rather than stranded as noise.
+    """
+    import pytest
+    words = _load_anfal_words()
+    if words is None:
+        pytest.skip("Anfal fixture not available")
+
+    from src.audio_processing_utils import load_quran_text
+    from src.alignment_utils import AyahDetector
+
+    quran_data = load_quran_text(
+        str(Path(__file__).parent.parent / "data/quran/quran.json")
+    )
+    detector = AyahDetector(quran_data=quran_data, confidence_threshold=0.65)
+
+    results = detector.detect_ayahs_from_transcription(
+        transcribed_words=words,
+        surah_hint=8,
+        start_ayah=1,
+        end_ayah=None,  # full surah: proportional band placement is correct
+        mode="dtw",
+    )
+
+    ayah10_events = [r for r in results if r["ayah"] == 10]
+    assert ayah10_events, "No events found for ayah 10"
+
+    total_words_covered = sum(
+        r["word_indices"][1] - r["word_indices"][0]
+        for r in ayah10_events
+    )
+    assert total_words_covered >= 20, (
+        f"Ayah 10 events cover only {total_words_covered} words — "
+        f"expected >=20 (should include both the repeated phrase and ending). "
+        f"Events: {[(r['ayah'], r.get('event_type'), r['word_indices']) for r in ayah10_events]}"
+    )
