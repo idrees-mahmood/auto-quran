@@ -541,8 +541,8 @@ def test_noise_second_pass_splits_block_repetition():
     )
 
     rep_events = [e for e in events if e.event_type == "repetition"]
-    assert len(rep_events) >= 2, (
-        f"Expected >=2 repetition events, got {len(rep_events)}. "
+    assert len(rep_events) == 2, (
+        f"Expected exactly 2 repetition events, got {len(rep_events)}. "
         f"All events: {[(e.ayah, e.event_type, e.word_indices) for e in events]}"
     )
 

@@ -427,6 +427,8 @@ def build_recitation_events(
                     rc = ref["count"]
                     w_min = max(2, rc - 2)
                     w_max = min(noise_end - ptr, rc * 2)
+                    if w_max < w_min:
+                        continue
                     for w in range(w_min, w_max + 1):
                         s = score_window(
                             words[ptr: ptr + w],
