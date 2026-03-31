@@ -137,8 +137,8 @@ def build_banded_similarity_matrix(
 
     band_width = max(config.band_width_min,
                      int(total_ref_words * config.band_width_ratio))
-    logger.debug(f"Similarity matrix: band_width={band_width}, "
-                 f"total_ref={total_ref_words}, M={M}")
+    logger.info(f"Similarity matrix: {len(ayahs)} ayahs, {M} words, "
+                f"band_width={band_width}, total_ref={total_ref_words}")
 
     matrix: Dict[Tuple[int, int], Tuple[float, int]] = {}
     cumulative_words = 0
@@ -155,6 +155,7 @@ def build_banded_similarity_matrix(
         band_start = max(0, expected_pos - band_width)
         band_end = min(M - 1, expected_pos + band_width)
 
+        best_in_band = 0.0
         for i in range(band_start, band_end + 1):
             best_score, best_w = 0.0, ref_count
             min_w = max(1, ref_count - 2)
@@ -165,8 +166,24 @@ def build_banded_similarity_matrix(
                 if s > best_score:
                     best_score, best_w = s, w_size
             matrix[(i, j)] = (best_score, best_w)
+            if best_score > best_in_band:
+                best_in_band = best_score
 
-    logger.debug(f"Matrix built: {len(matrix)} cells for {len(ayahs)} ayahs")
+        logger.debug(
+            f"  Ayah {j}: ref={ref_count}w, expected@{expected_pos}, "
+            f"band=[{band_start},{band_end}], best_score={best_in_band:.3f}"
+        )
+
+    scores = [v[0] for v in matrix.values()]
+    if scores:
+        above_thresh = sum(1 for s in scores if s >= config.confidence_threshold)
+        logger.info(
+            f"Matrix built: {len(matrix)} cells, "
+            f"scores min={min(scores):.3f} mean={sum(scores)/len(scores):.3f} max={max(scores):.3f}, "
+            f"{above_thresh} cells above confidence threshold ({config.confidence_threshold})"
+        )
+    else:
+        logger.warning("Matrix built: 0 cells — nothing to align")
     return matrix
 
 
@@ -202,10 +219,13 @@ def run_dp_alignment(
     start_ayah, end_ayah = ayah_range
     ayahs = [j for j in range(start_ayah, end_ayah + 1) if j in ayah_corpus]
     if not ayahs:
+        logger.warning("run_dp_alignment: no ayahs in range %s–%s", start_ayah, end_ayah)
         return []
 
     M = len(words)
     N = len(ayahs)
+    logger.info(f"DP alignment: {M} words × {N} ayahs, "
+                f"{len(similarity_matrix)} pre-computed cells")
 
     # dp[i][k]     = minimum cost to reach (word_pos=i, ayah_col=k)
     # parent[i][k] = (prev_i, prev_k, move_tuple)
@@ -269,6 +289,15 @@ def run_dp_alignment(
             if effective < best_cost:
                 best_cost, best_end = effective, (ei, ek)
 
+    ei_final, ek_final = best_end
+    logger.info(
+        f"DP terminal: cost={best_cost:.3f} at (word={ei_final}/{M}, ayah_col={ek_final}/{N})"
+    )
+    if ei_final < M:
+        logger.debug(f"  {M - ei_final} trailing words not covered by path")
+    if ek_final < N:
+        logger.debug(f"  {N - ek_final} trailing ayahs not covered by path")
+
     # Traceback
     moves: List[Tuple] = []
     ci, ck = best_end
@@ -281,8 +310,20 @@ def run_dp_alignment(
     n_match = sum(1 for m in moves if m[0] == _MATCH)
     n_skip = sum(1 for m in moves if m[0] == _SKIP_AYAH)
     n_noise = sum(1 for m in moves if m[0] == _NOISE)
-    logger.info(f"DP: cost={best_cost:.3f}, "
-                f"{n_match} MATCHes, {n_skip} SKIPs, {n_noise} NOISE moves")
+    logger.info(
+        f"DP path: {len(moves)} moves — {n_match} MATCH, {n_skip} SKIP, {n_noise} NOISE"
+    )
+
+    if logger.isEnabledFor(logging.DEBUG):
+        for move in moves:
+            if move[0] == _MATCH:
+                _, ayah_num, si, ei, sc = move
+                logger.debug(f"  MATCH  ayah={ayah_num} words[{si}:{ei}] score={sc:.3f}")
+            elif move[0] == _SKIP_AYAH:
+                logger.debug(f"  SKIP   ayah={move[1]}")
+            else:
+                logger.debug(f"  NOISE  words[{move[1]}:{move[2]}]")
+
     return moves
 
 
@@ -320,6 +361,8 @@ def build_recitation_events(
     occurrence: Dict[int, int] = {}
     matched_ayahs: List[int] = []   # ayahs already matched, in order
 
+    logger.info(f"Building recitation events from {len(path)} path moves for surah {surah}")
+
     # ---- First pass: process MATCH and SKIP_AYAH moves ----
     noise_regions: List[Tuple[int, int]] = []   # (start_i, end_i) of NOISE runs
     prev_was_noise = False
@@ -352,12 +395,19 @@ def build_recitation_events(
                 evt_type = "full"
 
             event_words = words[start_i:end_i]
+            t_start = event_words[0].start if event_words else 0.0
+            t_end = event_words[-1].end if event_words else 0.0
+            logger.debug(
+                f"  MATCH  ayah={ayah_num} occ={occ} type={evt_type} "
+                f"score={score:.3f} words[{start_i}:{end_i}] ({consumed}/{ref_count}w) "
+                f"t=[{t_start:.2f},{t_end:.2f}]"
+            )
             events.append(RecitationEvent(
                 surah=surah,
                 ayah=ayah_num,
                 occurrence=occ,
-                start_time=event_words[0].start if event_words else 0.0,
-                end_time=event_words[-1].end if event_words else 0.0,
+                start_time=t_start,
+                end_time=t_end,
                 confidence=score,
                 transcribed_text=" ".join(w.word for w in event_words),
                 word_indices=(start_i, end_i),
@@ -375,6 +425,7 @@ def build_recitation_events(
                 prev_was_noise = False
             _, ayah_num = move
             ref_count = ayah_corpus[ayah_num]["count"]
+            logger.debug(f"  SKIP   ayah={ayah_num} ({ref_count}w)")
             events.append(RecitationEvent(
                 surah=surah, ayah=ayah_num, occurrence=1,
                 start_time=0.0, end_time=0.0, confidence=0.0,
@@ -406,6 +457,13 @@ def build_recitation_events(
     if last_covered < len(words):
         noise_regions.append((last_covered, len(words)))
 
+    logger.info(
+        f"Noise regions: {len(noise_regions)} "
+        f"({sum(e - s for s, e in noise_regions)} total words)"
+    )
+    for ns, ne in noise_regions:
+        logger.debug(f"  noise words[{ns}:{ne}] ({ne - ns}w)")
+
     # ---- Second pass: greedy sub-segmentation of noise regions ----
     # Each noise region is scanned left-to-right. At each pointer position we
     # try every previously-matched ayah over windows of [rc-2, rc*2] words.
@@ -414,10 +472,15 @@ def build_recitation_events(
     # region produce 1-N repetition events (fixing multi-ayah block repeats).
     if matched_ayahs:
         prev_ayahs_sorted = sorted(set(matched_ayahs))  # stable order
+        logger.info(
+            f"Second pass: scanning {len(noise_regions)} noise region(s) "
+            f"for repetitions of {len(prev_ayahs_sorted)} matched ayah(s): {prev_ayahs_sorted}"
+        )
         for noise_start, noise_end in noise_regions:
             if noise_end - noise_start < 2:
                 continue
             ptr = noise_start
+            reps_in_region = 0
             while ptr < noise_end:
                 best_score, best_ayah, best_w = 0.0, None, 0
                 for prev_ayah in prev_ayahs_sorted:
@@ -441,6 +504,11 @@ def build_recitation_events(
                     ref_count = ayah_corpus[best_ayah]["count"]
                     occurrence[best_ayah] = occurrence.get(best_ayah, 0) + 1
                     rep_words = words[ptr: ptr + best_w]
+                    logger.debug(
+                        f"  REPETITION ayah={best_ayah} occ={occurrence[best_ayah]} "
+                        f"score={best_score:.3f} words[{ptr}:{ptr + best_w}] "
+                        f"t=[{rep_words[0].start:.2f},{rep_words[-1].end:.2f}]"
+                    )
                     events.append(RecitationEvent(
                         surah=surah, ayah=best_ayah,
                         occurrence=occurrence[best_ayah],
@@ -454,9 +522,33 @@ def build_recitation_events(
                         event_type="repetition",
                     ))
                     ptr += best_w
+                    reps_in_region += 1
                 else:
+                    if logger.isEnabledFor(logging.DEBUG) and best_ayah is not None:
+                        logger.debug(
+                            f"  no rep match at ptr={ptr} "
+                            f"(best={best_score:.3f} for ayah={best_ayah})"
+                        )
                     ptr += 1  # no good match at this position — advance silently
+            if reps_in_region:
+                logger.info(
+                    f"  noise[{noise_start}:{noise_end}]: "
+                    f"{reps_in_region} repetition(s) found"
+                )
+            else:
+                logger.debug(
+                    f"  noise[{noise_start}:{noise_end}]: no repetitions"
+                )
 
     # Sort by start_time (skip events have 0.0; keep them stable)
     events.sort(key=lambda e: (e.start_time, e.ayah))
+
+    n_full = sum(1 for e in events if e.event_type == "full")
+    n_partial = sum(1 for e in events if e.event_type == "partial")
+    n_skip = sum(1 for e in events if e.event_type == "skip")
+    n_rep = sum(1 for e in events if e.event_type == "repetition")
+    logger.info(
+        f"Events built: {len(events)} total — "
+        f"{n_full} full, {n_partial} partial, {n_skip} skip, {n_rep} repetition"
+    )
     return events

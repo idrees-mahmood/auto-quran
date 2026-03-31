@@ -319,6 +319,7 @@ class AyahDetector:
         skip_preamble: bool = True,
         allow_repetition: bool = False,  # Enable for recitations with repeated ayahs
         mode: str = "sequential",
+        word_confidence_filter: float = 0.0,
     ) -> List[Dict[str, Any]]:
 
         """
@@ -348,6 +349,7 @@ class AyahDetector:
                 start_ayah=start_ayah,
                 end_ayah=end_ayah,
                 skip_preamble=skip_preamble,
+                word_confidence_filter=word_confidence_filter,
             )
             return [e.to_dict() for e in events]
 
@@ -1039,6 +1041,7 @@ class AyahDetector:
         end_ayah: Optional[int] = None,
         skip_preamble: bool = True,
         config: Optional[DTWConfig] = None,
+        word_confidence_filter: float = 0.0,
     ) -> List:
         """
         DTW-based globally optimal ayah alignment.
@@ -1048,6 +1051,16 @@ class AyahDetector:
                 confidence_threshold=self.confidence_threshold,
                 band_width_min=25,
             )
+
+        logger.debug(
+            f"DTWConfig: band_width_ratio={config.band_width_ratio}, "
+            f"band_width_min={config.band_width_min}, "
+            f"confidence_threshold={config.confidence_threshold}, "
+            f"partial_confidence_threshold={config.partial_confidence_threshold}, "
+            f"skip_ayah_penalty={config.skip_ayah_penalty}, "
+            f"noise_word_penalty={config.noise_word_penalty}, "
+            f"max_noise_run={config.max_noise_run}"
+        )
 
         max_ayah = max(
             (a for (s, a) in self.corpus if s == surah),
@@ -1068,6 +1081,24 @@ class AyahDetector:
                 logger.info(f"Skipped {word_start} preamble words")
 
         working_words = transcribed_words[word_start:]
+
+        # Drop Whisper hallucinations: words with probability below the filter threshold
+        # have very low confidence and tend to be repeated garbage that corrupts the band
+        # calculation. We keep an index map so word_indices can be translated back to
+        # positions in the original transcribed_words list after alignment.
+        orig_idx: Optional[List[int]] = None
+        if word_confidence_filter > 0.0:
+            orig_idx = [
+                i for i, w in enumerate(working_words)
+                if w.confidence >= word_confidence_filter
+            ]
+            n_dropped = len(working_words) - len(orig_idx)
+            if n_dropped:
+                logger.info(
+                    f"DTW: dropped {n_dropped}/{len(working_words)} low-confidence words "
+                    f"(threshold={word_confidence_filter})"
+                )
+            working_words = [working_words[i] for i in orig_idx]
 
         # Build per-ayah corpus for this range
         ayah_corpus: Dict[int, Dict] = {}
@@ -1136,6 +1167,14 @@ class AyahDetector:
         if n_skip:
             logger.info(f"DTW: dropping {n_skip} internal SKIP events (unrecited ayahs)")
         events = [e for e in events if e.event_type != "skip"]
+
+        # Translate filtered word_indices back to original (pre-filter) positions.
+        if orig_idx is not None:
+            for e in events:
+                fstart, fend = e.word_indices
+                ostart = orig_idx[fstart] if fstart < len(orig_idx) else fstart
+                oend = (orig_idx[fend - 1] + 1) if fend > fstart and (fend - 1) < len(orig_idx) else ostart
+                e.word_indices = (ostart, oend)
 
         for e in events:
             e.word_indices = (

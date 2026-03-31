@@ -49,6 +49,7 @@
 |--------|---------|----------------------|
 | `audio_processing_utils.py` | Whisper transcription, audio preprocessing | `WhisperTranscriber`, `AudioPreprocessor`, `ArabicNormalizer` |
 | `alignment_utils.py` | Ayah detection, word alignment | `AyahDetector`, `WordAligner`, `convert_to_tarteel_format()` |
+| `dtw_alignment.py` | DTW-based alignment engine | `build_banded_similarity_matrix()`, `run_dp_alignment()`, `build_recitation_events()`, `DTWConfig` |
 
 ## Data Formats
 
@@ -95,12 +96,19 @@ Handles diacritics and letter variants for fuzzy matching:
 - Normalize Alif variants: أ إ آ ٱ → ا
 - Normalize Ya variants: ى → ي
 
-### Ayah Detection
-Sequential detection with gap filling:
+### Ayah Detection (Sequential)
+Default mode — fast, no repetition handling:
 1. Try matching expected ayah at current position
 2. Consume words based on reference word count (±5 flexibility)
 3. Move to next ayah on match
 4. Single-word advance on no match
+
+### Ayah Detection (DTW)
+Used when `mode='dtw'` — handles repetitions, noise, and partial ayahs:
+1. **Banded similarity matrix** — score every (word-window, ayah) pair within a diagonal band
+2. **DP alignment** — find minimum-cost path through MATCH / SKIP_AYAH / NOISE transitions
+3. **Noise second-pass** — greedily scan uncovered word regions for repeated ayahs
+4. Produces `RecitationEvent` objects with `event_type` in `{full, partial, repetition, skip}`
 
 ### Word Alignment
 Using `difflib.SequenceMatcher`:
@@ -149,7 +157,6 @@ See `docs/REGRESSION_TESTS.md` for full documentation.
 | Fonts | `data/fonts/` |
 | Transcription cache | `data/transcriptions/` |
 | Test fixtures | `data/fixtures/` |
-| Processed audio | `data/audio_processed/` |
 | Temp files | `temp/` (gitignored) |
 
 ## macOS / Apple Silicon

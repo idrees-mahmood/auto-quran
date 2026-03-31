@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# AI Quran Video Composer Installation Script
-# This script automates the installation process for Unix-based systems (macOS, Linux)
+# AI Quran Video Composer - Installation Script (macOS / Linux)
+# On Windows use: scripts/setup_windows.ps1
 
 set -e  # Exit on any error
 
-echo "🕌 AI Quran Video Composer - Installation Script"
-echo "================================================"
+echo "AI Quran Video Composer — Installation"
+echo "======================================="
 
 # Check Python version
 echo "📋 Checking Python version..."
@@ -26,17 +26,13 @@ if command -v ffmpeg &> /dev/null; then
     ffmpeg_version=$(ffmpeg -version 2>&1 | head -n1 | awk '{print $3}')
     echo "✅ FFmpeg $ffmpeg_version is installed"
 else
-    echo "❌ FFmpeg is not installed."
-    echo "Please install FFmpeg first:"
-    echo ""
+    echo "  FFmpeg is not installed."
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "  macOS: brew install ffmpeg"
+        echo "  Install with: brew install ffmpeg"
     elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        echo "  Ubuntu/Debian: sudo apt update && sudo apt install ffmpeg"
-        echo "  CentOS/RHEL: sudo yum install ffmpeg"
+        echo "  Install with: sudo apt update && sudo apt install ffmpeg"
     fi
-    echo ""
-    echo "Then run this script again."
+    echo "  Then run this script again."
     exit 1
 fi
 
@@ -49,23 +45,19 @@ if command -v uv &> /dev/null && [ -f "pyproject.toml" ]; then
     set -e
 
     if [ "$uv_exit_code" -eq 0 ]; then
-        echo "✅ uv sync succeeded."
+        echo "  uv sync succeeded."
 
-        # Activate uv virtual environment for this script session.
         if [ -f ".venv/bin/activate" ]; then
             source .venv/bin/activate
         fi
 
         echo ""
-        echo "🎉 Installation completed successfully with uv!"
+        echo "Installation complete."
         echo ""
-        echo "📝 Next steps:"
-        echo "1. Activate in current shell (optional): source .venv/bin/activate"
-        echo "2. Launch UI: streamlit run app.py"
-        echo "3. Run regression tests: python regression_tests.py run"
-        echo "4. Run pytest suite: pytest"
+        echo "Next steps:"
+        echo "  ./launch_ui.sh          # start the web UI"
+        echo "  uv run pytest           # run tests"
         echo ""
-        echo "🕌 Happy video creating!"
         exit 0
     else
         echo "⚠️ uv sync failed (exit code: $uv_exit_code). Falling back to venv + pip..."
@@ -96,18 +88,16 @@ echo "📦 Installing Python dependencies..."
 pip install -r requirements.txt
 
 echo ""
-echo "🎉 Installation completed successfully!"
+echo "Installation complete."
 echo ""
-echo "📝 Next steps:"
-echo "1. Activate the virtual environment: source venv/bin/activate"
-echo "2. Get your API keys:"
-echo "   - Pexels API: https://www.pexels.com/api/"
-echo "   - OpenAI API: https://platform.openai.com/api-keys"
-echo "3. Start Jupyter: jupyter notebook"
-echo "4. Open video_gen.ipynb and follow the instructions"
+echo "Next steps:"
+echo "  source venv/bin/activate   # activate the virtual environment"
+echo "  ./launch_ui.sh             # start the web UI"
 echo ""
-echo "💡 Tip: if you install uv, you can use"
-echo "   uv sync"
-echo "   uv run streamlit run app.py"
+echo "For GPU transcription on a separate machine, see docs/REMOTE_WHISPER_CLOUDFLARE.md"
 echo ""
-echo "🕌 Happy video creating!" 
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    echo "Linux note: Google Chrome is required for text rendering."
+    echo "  Ubuntu/Debian: sudo apt install google-chrome-stable"
+    echo ""
+fi

@@ -1,70 +1,40 @@
 #!/bin/bash
 
-# Quran Video Generator - Launch Script
-# This script starts the Streamlit UI
+# AI Quran Video Composer — Launch UI
 
 set -e
 
-echo "🚀 Starting Quran Video Generator..."
-echo ""
-
-# Prefer uv-managed environments when available
+# Prefer uv when available
 if command -v uv &> /dev/null && [ -f "pyproject.toml" ]; then
-    echo "📦 Using uv-managed environment..."
-    uv sync
-
-    # Activate uv virtual environment for this script session.
+    uv sync --quiet
     if [ -f ".venv/bin/activate" ]; then
         source .venv/bin/activate
     fi
-
-    echo "🌐 Launching UI..."
-    echo ""
-    echo "The application will open in your browser at:"
-    echo "  👉 http://localhost:8501"
-    echo ""
-    echo "Press Ctrl+C to stop the server."
-    echo ""
-
+    echo "http://localhost:8501  (Ctrl+C to stop)"
     streamlit run app.py
     exit 0
 fi
 
-# Check if virtual environment exists
-if [ ! -d "venv" ]; then
-    echo "❌ Virtual environment not found!"
-    echo "Please run setup:"
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "  ./setup_macos.sh"
-    else
-        echo "  python3 -m venv venv"
-        echo "  source venv/bin/activate"
-        echo "  pip install -r requirements.txt"
-        echo ""
-        echo "Or use uv (recommended):"
-        echo "  uv sync"
-    fi
-    exit 1
+# Fall back to .venv (created by uv even when uv isn't on PATH)
+if [ -f ".venv/bin/activate" ]; then
+    source .venv/bin/activate
+    echo "http://localhost:8501  (Ctrl+C to stop)"
+    streamlit run app.py
+    exit 0
 fi
 
-# Activate virtual environment
-echo "📦 Activating virtual environment..."
-source venv/bin/activate
-
-# Check if Streamlit is installed
-if ! python -c "import streamlit" 2>/dev/null; then
-    echo "❌ Streamlit not installed!"
-    echo "Installing Streamlit..."
-    pip install streamlit>=1.29.0
+# Fall back to legacy venv
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+    echo "http://localhost:8501  (Ctrl+C to stop)"
+    streamlit run app.py
+    exit 0
 fi
 
-# Launch Streamlit app
-echo "🌐 Launching UI..."
-echo ""
-echo "The application will open in your browser at:"
-echo "  👉 http://localhost:8501"
-echo ""
-echo "Press Ctrl+C to stop the server."
-echo ""
-
-streamlit run app.py
+echo "No virtual environment found. Run setup first:"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "  ./setup_macos.sh"
+else
+    echo "  ./install.sh"
+fi
+exit 1

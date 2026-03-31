@@ -20,6 +20,11 @@ import traceback
 import streamlit as st
 from streamlit import session_state as ss
 
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
+
 # Import project modules
 from src import utils
 from src.quran_utils import Reciter
@@ -29,6 +34,11 @@ from src.audio_processing_utils import (
     AudioPreprocessor, WhisperTranscriber, ArabicNormalizer,
     TranscribedWord, load_quran_text, compute_audio_hash,
     save_transcription_checkpoint, load_transcription_checkpoint
+)
+from src.whisper_remote_client import (
+    DEFAULT_WHISPER_MODELS,
+    fetch_whisper_capabilities,
+    transcribe_audio_via_remote,
 )
 from src.alignment_utils import AyahDetector, WordAligner, convert_to_tarteel_format
 
@@ -49,6 +59,21 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+
+def load_app_environment() -> None:
+    """Load .env variables for local and shared test/prod configuration."""
+    if load_dotenv is None:
+        return
+
+    env_file = os.environ.get("APP_ENV_FILE", "").strip()
+    if env_file:
+        load_dotenv(dotenv_path=env_file, override=False)
+    else:
+        load_dotenv(override=False)
+
+
+load_app_environment()
 
 # Custom CSS for better styling
 st.markdown("""
@@ -124,6 +149,19 @@ def init_session_state():
         'is_processing': False,
         'processing_stage': None,
         'processing_error': None,
+
+        # Remote Whisper server configuration
+        'transcription_backend': 'local',
+        'whisper_environment': os.environ.get('WHISPER_TARGET_ENV', 'local'),
+        'whisper_server_url_local': os.environ.get('WHISPER_SERVER_URL_LOCAL', 'http://localhost:8001'),
+        'whisper_server_url_test': os.environ.get('WHISPER_SERVER_URL_TEST', ''),
+        'whisper_server_url_staging': os.environ.get('WHISPER_SERVER_URL_STAGING', ''),
+        'whisper_server_url_prod': os.environ.get('WHISPER_SERVER_URL_PROD', ''),
+        'whisper_server_url': os.environ.get('WHISPER_SERVER_URL', os.environ.get('WHISPER_SERVER_URL_LOCAL', 'http://localhost:8001')),
+        'whisper_remote_api_key': os.environ.get('WHISPER_REMOTE_API_KEY', ''),
+        'whisper_cf_access_client_id': os.environ.get('WHISPER_CF_ACCESS_CLIENT_ID', ''),
+        'whisper_cf_access_client_secret': os.environ.get('WHISPER_CF_ACCESS_CLIENT_SECRET', ''),
+        'whisper_server_capabilities': None,
     }
     
     for key, value in defaults.items():
@@ -550,6 +588,24 @@ def transcribe_audio_workflow(
             st.code(traceback.format_exc())
         
         return None
+
+
+def extract_words_from_transcription(transcription: Dict[str, Any]) -> List[TranscribedWord]:
+    """Extract word-level timestamps from a Whisper transcription payload."""
+    words: List[TranscribedWord] = []
+
+    for segment in transcription.get("segments", []):
+        for word_data in segment.get("words", []):
+            word = TranscribedWord(
+                word=word_data.get("word", "").strip(),
+                start=word_data.get("start", 0.0),
+                end=word_data.get("end", 0.0),
+                confidence=word_data.get("probability", None),
+            )
+            if word.word:
+                words.append(word)
+
+    return words
 
 
 def render_alignment_timeline(detected_ayahs: List[Dict], total_duration: float) -> None:
@@ -1137,14 +1193,147 @@ def main():
             
             if ss.get('processed_audio_path'):
                 st.success(f"✓ Audio ready: {Path(ss.processed_audio_path).name}")
+
+                backend_options = {
+                    "Local (This Machine)": "local",
+                    "Remote Whisper Server": "remote",
+                }
+                current_backend_label = next(
+                    (label for label, value in backend_options.items() if value == ss.transcription_backend),
+                    "Local (This Machine)",
+                )
+
+                selected_backend_label = st.radio(
+                    "Transcription Backend",
+                    list(backend_options.keys()),
+                    index=list(backend_options.keys()).index(current_backend_label),
+                    horizontal=True,
+                    help="Use local Whisper or send transcription to a remote Whisper server.",
+                )
+                backend_mode = backend_options[selected_backend_label]
+                ss.transcription_backend = backend_mode
+
+                remote_capabilities = None
+                if backend_mode == "remote":
+                    environment_labels = {
+                        "local": "Local",
+                        "test": "Test",
+                        "staging": "Staging",
+                        "prod": "Production",
+                        "custom": "Custom",
+                    }
+                    available_environments = [
+                        env_name
+                        for env_name in ("local", "test", "staging", "prod")
+                        if ss.get(f"whisper_server_url_{env_name}")
+                    ]
+                    if not available_environments:
+                        available_environments = ["local"]
+                    available_environments.append("custom")
+
+                    current_environment = ss.whisper_environment
+                    if current_environment not in available_environments:
+                        current_environment = "custom"
+
+                    selected_environment = st.selectbox(
+                        "Target Environment",
+                        available_environments,
+                        index=available_environments.index(current_environment),
+                        format_func=lambda env_name: environment_labels.get(env_name, env_name),
+                        help="Choose the shared remote endpoint for local/test/staging/prod.",
+                    )
+                    ss.whisper_environment = selected_environment
+
+                    if selected_environment != "custom":
+                        resolved_server_url = ss.get(f"whisper_server_url_{selected_environment}", "").strip()
+                        if not resolved_server_url:
+                            st.warning("No server URL configured for this environment.")
+                        ss.whisper_server_url = resolved_server_url
+
+                    server_url = st.text_input(
+                        "Whisper Server URL",
+                        value=ss.whisper_server_url,
+                        help="Example: https://whisper-test.example.com",
+                        disabled=selected_environment != "custom",
+                    ).strip()
+                    ss.whisper_server_url = server_url
+
+                    with st.expander("🔐 Remote Auth (Optional)", expanded=False):
+                        whisper_remote_api_key = st.text_input(
+                            "Whisper API Key",
+                            value=ss.whisper_remote_api_key,
+                            type="password",
+                            help="Sent as both Authorization: Bearer and X-API-Key headers.",
+                        ).strip()
+                        whisper_cf_access_client_id = st.text_input(
+                            "Cloudflare Access Client ID",
+                            value=ss.whisper_cf_access_client_id,
+                            type="password",
+                        ).strip()
+                        whisper_cf_access_client_secret = st.text_input(
+                            "Cloudflare Access Client Secret",
+                            value=ss.whisper_cf_access_client_secret,
+                            type="password",
+                        ).strip()
+
+                    ss.whisper_remote_api_key = whisper_remote_api_key
+                    ss.whisper_cf_access_client_id = whisper_cf_access_client_id
+                    ss.whisper_cf_access_client_secret = whisper_cf_access_client_secret
+
+                    refresh_capabilities = st.button(
+                        "🔄 Check Server Capabilities",
+                        help="Fetch available models and devices from the remote Whisper service.",
+                    )
+
+                    cached_capabilities = ss.get("whisper_server_capabilities")
+                    cached_url = cached_capabilities.get("url") if isinstance(cached_capabilities, dict) else None
+                    should_refresh = (
+                        refresh_capabilities
+                        or not isinstance(cached_capabilities, dict)
+                        or cached_url != server_url
+                    )
+
+                    if should_refresh and server_url:
+                        with st.spinner("Checking remote whisper server..."):
+                            remote_capabilities = fetch_whisper_capabilities(
+                                server_url,
+                                api_key=ss.whisper_remote_api_key,
+                                cf_access_client_id=ss.whisper_cf_access_client_id,
+                                cf_access_client_secret=ss.whisper_cf_access_client_secret,
+                            )
+                        remote_capabilities["url"] = server_url
+                        ss.whisper_server_capabilities = remote_capabilities
+                    else:
+                        remote_capabilities = cached_capabilities
+
+                    if isinstance(remote_capabilities, dict):
+                        if remote_capabilities.get("available"):
+                            gpu_text = "available" if remote_capabilities.get("gpu_available") else "not detected"
+                            st.success(f"Connected to remote server. GPU acceleration: {gpu_text}.")
+                        elif server_url:
+                            st.warning(
+                                "Remote server unavailable. Falling back to CPU-safe defaults. "
+                                f"Details: {remote_capabilities.get('error', 'unknown error')}"
+                            )
+
+                model_options = DEFAULT_WHISPER_MODELS
+                device_options = ["auto", "cpu", "mps", "cuda"]
+                if backend_mode == "remote":
+                    remote_capabilities = ss.get("whisper_server_capabilities")
+                    if isinstance(remote_capabilities, dict):
+                        model_options = remote_capabilities.get("models") or DEFAULT_WHISPER_MODELS
+                        device_options = remote_capabilities.get("devices") or ["auto", "cpu"]
+
+                model_default = "base" if "base" in model_options else model_options[0]
+                device_default = "auto" if "auto" in device_options else device_options[0]
                 
                 col_config1, col_config2 = st.columns(2)
                 
                 with col_config1:
                     whisper_model = st.selectbox(
                         "Whisper Model",
-                        ["tiny", "base", "small", "medium", "large", "turbo"],
-                        index=1,
+                        model_options,
+                        index=model_options.index(model_default),
                         help="Larger models are more accurate but slower. 'base' is recommended for most use cases."
                     )
                     
@@ -1161,8 +1350,8 @@ def main():
                 with col_config2:
                     device_option = st.selectbox(
                         "Processing Device",
-                        ["auto", "cpu", "mps", "cuda"],
-                        index=0,
+                        device_options,
+                        index=device_options.index(device_default),
                         help="'auto' detects best available device (MPS on Apple Silicon)"
                     )
                     
@@ -1181,21 +1370,50 @@ def main():
                     output_dir = "temp/custom_audio"
                     os.makedirs(output_dir, exist_ok=True)
                     
-                    transcription_result = transcribe_audio_workflow(
-                        audio_path=ss.processed_audio_path,
-                        model_name=whisper_model,
-                        device=device_option,
-                        output_dir=output_dir,
-                        progress_bar=progress_bar,
-                        status_text=status_text
-                    )
+                    if backend_mode == "remote":
+                        if not ss.whisper_server_url:
+                            st.error("Please provide a Whisper Server URL before starting remote transcription.")
+                            transcription_result = None
+                        else:
+                            try:
+                                status_text.text("⏳ Uploading audio to remote whisper server...")
+                                progress_bar.progress(0.2)
+
+                                transcription_result = transcribe_audio_via_remote(
+                                    base_url=ss.whisper_server_url,
+                                    audio_path=ss.processed_audio_path,
+                                    model_name=whisper_model,
+                                    device=device_option,
+                                    language="ar",
+                                    word_timestamps=True,
+                                    timeout_seconds=1800,
+                                    api_key=ss.whisper_remote_api_key,
+                                    cf_access_client_id=ss.whisper_cf_access_client_id,
+                                    cf_access_client_secret=ss.whisper_cf_access_client_secret,
+                                )
+
+                                progress_bar.progress(1.0)
+                                status_text.text("✓ Remote transcription complete!")
+                            except Exception as e:
+                                progress_bar.progress(1.0)
+                                status_text.text(f"❌ Remote transcription failed: {str(e)}")
+                                st.error(f"Remote transcription error: {str(e)}")
+                                transcription_result = None
+                    else:
+                        transcription_result = transcribe_audio_workflow(
+                            audio_path=ss.processed_audio_path,
+                            model_name=whisper_model,
+                            device=device_option,
+                            output_dir=output_dir,
+                            progress_bar=progress_bar,
+                            status_text=status_text
+                        )
                     
                     if transcription_result:
                         ss.transcription_result = transcription_result
-                        
-                        # Extract word timestamps
-                        transcriber = WhisperTranscriber(model_name=whisper_model, device=device_option)
-                        ss.transcribed_words = transcriber.extract_word_timestamps(transcription_result)
+
+                        # Extract word timestamps from transcription payload
+                        ss.transcribed_words = extract_words_from_transcription(transcription_result)
                         ss.current_step = 'detect'
                         
                         st.success(f"✅ Transcription complete! Found {len(ss.transcribed_words)} words")

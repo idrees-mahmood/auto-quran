@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  whisper-service:
+    build:
+      context: ../..
+      dockerfile: src/whisper_service/Dockerfile
+      args:
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-}
+    restart: unless-stopped
+    env_file:
+      - ./env/whisper-service.env
+    networks:
+      - whisper_internal
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - whisper-service
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    env_file:
+      - ./env/cloudflared.env
+    networks:
+      - whisper_internal
+
+networks:
+  whisper_internal:
+    driver: bridge
