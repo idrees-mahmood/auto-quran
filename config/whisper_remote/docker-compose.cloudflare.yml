@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   whisper-service:
     build:
@@ -18,8 +16,8 @@ services:
     restart: unless-stopped
     depends_on:
       - whisper-service
-    # TUNNEL_TOKEN is read from env_file by cloudflared automatically — no CLI substitution needed
-    command: tunnel --no-autoupdate run auto-quran-whisper
+    # $$TUNNEL_TOKEN is evaluated at container runtime (not by compose at parse time)
+    command: sh -c 'cloudflared tunnel --no-autoupdate run --token $$TUNNEL_TOKEN'
     env_file:
       - ./env/cloudflared.env
     networks:
