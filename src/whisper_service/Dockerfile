@@ -25,6 +25,9 @@ COPY src/whisper_service/requirements.txt /app/src/whisper_service/requirements.
 RUN python -m pip install -r /app/src/whisper_service/requirements.txt
 
 COPY src /app/src
+# Blank the top-level src/__init__.py — it wildcard-imports the full app
+# (pydub, LLM utils, etc.) which are not installed in this image.
+RUN echo "" > /app/src/__init__.py
 
 ENV PYTHONPATH=/app
 EXPOSE 8001
