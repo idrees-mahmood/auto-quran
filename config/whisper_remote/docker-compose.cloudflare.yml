@@ -18,7 +18,8 @@ services:
     restart: unless-stopped
     depends_on:
       - whisper-service
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    # TUNNEL_TOKEN is read from env_file by cloudflared automatically — no CLI substitution needed
+    command: tunnel --no-autoupdate run
     env_file:
       - ./env/cloudflared.env
     networks:

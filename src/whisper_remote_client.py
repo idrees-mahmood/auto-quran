@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import os
 from typing import Any, Dict
 
 import requests
 
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_WHISPER_MODELS = ["tiny", "base", "small", "medium", "large", "turbo"]
 DEFAULT_CPU_DEVICES = ["auto", "cpu"]
@@ -55,6 +58,46 @@ def _build_auth_headers(
     return headers
 
 
+def _log_headers(headers: Dict[str, str]) -> None:
+    """Log request headers with secrets masked."""
+    for k, v in headers.items():
+        masked = v[:4] + "****" if len(v) > 4 else "****"
+        logger.debug("  Header: %s: %s", k, masked)
+
+
+def check_health(base_url: str, timeout_seconds: int = 5) -> Dict[str, Any]:
+    """
+    Hit /api/v1/health (no auth required) to check basic connectivity.
+
+    Returns a dict with keys:
+      reachable (bool), status_code (int|None), error (str|None), detail (dict|None)
+    """
+    url = f"{_normalize_base_url(base_url)}/api/v1/health"
+    logger.info("Health check: GET %s", url)
+    try:
+        response = requests.get(url, timeout=timeout_seconds)
+        logger.info("Health check: HTTP %d", response.status_code)
+        try:
+            detail = response.json()
+        except Exception:
+            detail = {"raw": response.text[:200]}
+        return {
+            "reachable": response.status_code == 200,
+            "status_code": response.status_code,
+            "error": None if response.status_code == 200 else f"HTTP {response.status_code}",
+            "detail": detail,
+        }
+    except requests.exceptions.ConnectionError as exc:
+        logger.warning("Health check: connection error — %s", exc)
+        return {"reachable": False, "status_code": None, "error": f"Connection refused: {exc}", "detail": None}
+    except requests.exceptions.Timeout:
+        logger.warning("Health check: timed out after %ds", timeout_seconds)
+        return {"reachable": False, "status_code": None, "error": f"Timed out after {timeout_seconds}s", "detail": None}
+    except Exception as exc:
+        logger.warning("Health check: unexpected error — %s", exc)
+        return {"reachable": False, "status_code": None, "error": str(exc), "detail": None}
+
+
 def fetch_whisper_capabilities(
     base_url: str,
     timeout_seconds: int = 5,
@@ -63,19 +106,31 @@ def fetch_whisper_capabilities(
     cf_access_client_secret: str | None = None,
 ) -> Dict[str, Any]:
     """Fetch capabilities from a remote Whisper server."""
+    url = f"{_normalize_base_url(base_url)}/api/v1/capabilities"
+    headers = _build_auth_headers(
+        api_key=api_key,
+        cf_access_client_id=cf_access_client_id,
+        cf_access_client_secret=cf_access_client_secret,
+    )
+    logger.info("Capabilities: GET %s", url)
+    _log_headers(headers)
     try:
-        headers = _build_auth_headers(
-            api_key=api_key,
-            cf_access_client_id=cf_access_client_id,
-            cf_access_client_secret=cf_access_client_secret,
-        )
-        response = requests.get(
-            f"{_normalize_base_url(base_url)}/api/v1/capabilities",
-            timeout=timeout_seconds,
-            headers=headers,
-        )
+        response = requests.get(url, timeout=timeout_seconds, headers=headers)
+        logger.info("Capabilities: HTTP %d", response.status_code)
+
+        if response.status_code == 401:
+            body = response.text[:300]
+            logger.warning("Capabilities: 401 Unauthorized — %s", body)
+            return _fallback_capabilities(f"HTTP 401 Unauthorized — check your API key. Response: {body}")
+
+        if response.status_code == 403:
+            body = response.text[:300]
+            logger.warning("Capabilities: 403 Forbidden — %s", body)
+            return _fallback_capabilities(f"HTTP 403 Forbidden — {body}")
+
         response.raise_for_status()
         payload = response.json()
+        logger.debug("Capabilities payload: %s", payload)
 
         if isinstance(payload, dict) and payload.get("success"):
             capabilities = payload.get("capabilities", {})
@@ -90,7 +145,7 @@ def fetch_whisper_capabilities(
         if "auto" not in devices:
             devices = ["auto"] + [d for d in devices if d != "auto"]
 
-        return {
+        result = {
             "available": True,
             "models": models,
             "devices": devices,
@@ -98,7 +153,14 @@ def fetch_whisper_capabilities(
                 capabilities.get("gpu_available", any(d in devices for d in ("cuda", "mps")))
             ),
         }
+        logger.info(
+            "Capabilities: models=%s devices=%s gpu=%s",
+            models, devices, result["gpu_available"],
+        )
+        return result
+
     except Exception as exc:
+        logger.warning("Capabilities: failed — %s", exc)
         return _fallback_capabilities(str(exc))
 
 
@@ -125,6 +187,12 @@ def transcribe_audio_via_remote(
         cf_access_client_id=cf_access_client_id,
         cf_access_client_secret=cf_access_client_secret,
     )
+    file_size_mb = os.path.getsize(audio_path) / 1024 / 1024
+    logger.info(
+        "Transcribe: POST %s  file=%s (%.1f MB) model=%s device=%s",
+        endpoint, os.path.basename(audio_path), file_size_mb, model_name, device,
+    )
+    _log_headers(headers)
 
     with open(audio_path, "rb") as audio_file:
         files = {
@@ -145,6 +213,13 @@ def transcribe_audio_via_remote(
             timeout=timeout_seconds,
         )
 
+    logger.info("Transcribe: HTTP %d", response.status_code)
+
+    if response.status_code in (401, 403):
+        body = response.text[:300]
+        logger.warning("Transcribe: auth error %d — %s", response.status_code, body)
+        raise RuntimeError(f"HTTP {response.status_code} — check API key. Response: {body}")
+
     response.raise_for_status()
     payload = response.json()
 
@@ -154,10 +229,16 @@ def transcribe_audio_via_remote(
             message = error.get("message", "Remote transcription failed")
         else:
             message = str(error)
+        logger.warning("Transcribe: server returned failure — %s", message)
         raise RuntimeError(message)
 
     transcription = payload.get("transcription")
     if not isinstance(transcription, dict):
         raise RuntimeError("Remote response did not contain a transcription object")
 
+    meta = payload.get("metadata", {})
+    logger.info(
+        "Transcribe: complete — device_used=%s processing_time=%.1fs",
+        meta.get("device_used", "?"), meta.get("processing_time_seconds", 0),
+    )
     return transcription

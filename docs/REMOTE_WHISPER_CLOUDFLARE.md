@@ -44,98 +44,131 @@ Use this to expose the server securely over the internet without opening inbound
 
 ### Prerequisites
 
-- Docker + Docker Compose on the remote host
-- Cloudflare account with Zero Trust enabled
-- `cloudflared` CLI installed locally for one-time tunnel setup
-- DNS zone in Cloudflare (for example `example.com`)
+- Docker Desktop (Windows/Mac/Linux) or Docker Engine (Linux) on the GPU server
+- Cloudflare account with Zero Trust enabled and your domain's DNS managed by Cloudflare
+- `cloudflared` CLI — one-time tunnel creation can be done from any machine
 
-### 1. Create Tunnel and DNS Route
+### 1. Install cloudflared on the GPU server (Windows)
 
-Run these once from any machine that has `cloudflared` and your Cloudflare login:
-
-```bash
-cloudflared tunnel login
-cloudflared tunnel create auto-quran-whisper-test
-cloudflared tunnel route dns auto-quran-whisper-test whisper-test.example.com
-cloudflared tunnel token auto-quran-whisper-test
+```powershell
+winget install Cloudflare.cloudflared
 ```
 
-Take the token from the last command and store it in `config/whisper_remote/env/cloudflared.env`.
+Or download the MSI from https://github.com/cloudflare/cloudflared/releases and install it.
 
-### 2. Configure Cloudflare Access
+### 2. Create the Tunnel and DNS Route
 
-In Cloudflare Zero Trust:
+Run these once from the GPU server (PowerShell):
 
-1. Create a **Self-hosted** Access application for `https://whisper-test.example.com/*`.
-2. Add policy for your team identity provider (email/domain/group allow-list).
-3. Create a **Service Token** for non-interactive app-to-app access.
-4. Save:
-   - `CF-Access-Client-Id`
-   - `CF-Access-Client-Secret`
+```powershell
+cloudflared tunnel login
+cloudflared tunnel create auto-quran-whisper
+cloudflared tunnel route dns auto-quran-whisper whisper.amplab.co.uk
+cloudflared tunnel token auto-quran-whisper
+```
 
-### 3. Configure Environment Files
+Copy the token printed by the last command — you'll need it in step 4.
 
-Create runtime env files from templates:
+### 3. Configure Cloudflare Access
 
+In [Cloudflare Zero Trust](https://one.dash.cloudflare.com):
+
+1. **Access → Applications → Add an application → Self-hosted**
+2. Application domain: `whisper.amplab.co.uk`
+3. Add a policy — allow your team by email domain (`amplab.co.uk`) or specific addresses
+4. **Access → Service Auth → Create Service Token** — save the `Client ID` and `Client Secret`
+
+### 4. Configure Environment Files
+
+On the GPU server, copy the templates and fill in values:
+
+**Windows (PowerShell):**
+```powershell
+Copy-Item config\whisper_remote\env\whisper-service.env.example `
+          config\whisper_remote\env\whisper-service.env
+Copy-Item config\whisper_remote\env\cloudflared.env.example `
+          config\whisper_remote\env\cloudflared.env
+Copy-Item config\whisper_remote\env\ui.remote.env.example .env
+```
+
+**macOS / Linux:**
 ```bash
 cp config/whisper_remote/env/whisper-service.env.example config/whisper_remote/env/whisper-service.env
-cp config/whisper_remote/env/cloudflared.env.example config/whisper_remote/env/cloudflared.env
-cp config/whisper_remote/env/ui.remote.env.example .env
+cp config/whisper_remote/env/cloudflared.env.example     config/whisper_remote/env/cloudflared.env
+cp config/whisper_remote/env/ui.remote.env.example       .env
 ```
 
-Update values:
+Edit the three files:
 
-- `config/whisper_remote/env/whisper-service.env`
-  - `WHISPER_SERVER_API_KEY`: strong shared secret
-- `config/whisper_remote/env/cloudflared.env`
-  - `CLOUDFLARE_TUNNEL_TOKEN`: output from `cloudflared tunnel token ...`
-- `.env` (Streamlit app)
-  - `WHISPER_SERVER_URL_TEST`: Cloudflare URL
-  - `WHISPER_REMOTE_API_KEY`: same as service API key
-  - `WHISPER_CF_ACCESS_CLIENT_ID` and `WHISPER_CF_ACCESS_CLIENT_SECRET`: Access service token values
-
-### 4. Start the Remote Stack
-
-On the remote host:
-
-```bash
-docker compose -f config/whisper_remote/docker-compose.cloudflare.yml up -d --build
+**`config/whisper_remote/env/whisper-service.env`**
+```
+WHISPER_SERVER_API_KEY=<strong-random-secret>
 ```
 
-Optional GPU build on NVIDIA host:
+**`config/whisper_remote/env/cloudflared.env`**
+```
+CLOUDFLARE_TUNNEL_TOKEN=<token from step 2>
+```
 
+**`.env`** (on each dev machine's copy of the repo)
+```
+WHISPER_SERVER_URL_TEST=https://whisper.amplab.co.uk
+WHISPER_REMOTE_API_KEY=<same secret as above>
+WHISPER_CF_ACCESS_CLIENT_ID=<Service Token Client ID>
+WHISPER_CF_ACCESS_CLIENT_SECRET=<Service Token Client Secret>
+```
+
+### 5. Start the Stack on the GPU Server
+
+**Windows (PowerShell) — NVIDIA GPU:**
+```powershell
+$env:TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu124"
+docker compose -f config\whisper_remote\docker-compose.cloudflare.yml up -d --build
+```
+
+**Windows (PowerShell) — CPU only:**
+```powershell
+docker compose -f config\whisper_remote\docker-compose.cloudflare.yml up -d --build
+```
+
+**Linux — NVIDIA GPU:**
 ```bash
 TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124 \
   docker compose -f config/whisper_remote/docker-compose.cloudflare.yml up -d --build
 ```
 
-### 5. Verify Health and Auth
+Docker Desktop must be running. The `--gpus all` flag in `docker run` requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) on Linux, or [NVIDIA drivers with WSL2](https://developer.nvidia.com/cuda/wsl) on Windows.
 
-From any machine:
+### 6. Verify
 
-```bash
-curl -sS https://whisper-test.example.com/api/v1/health
-```
-
-Verify protected endpoint:
+From any machine with internet access:
 
 ```bash
-curl -sS https://whisper-test.example.com/api/v1/capabilities \
+# Health (no auth required)
+curl https://whisper.amplab.co.uk/api/v1/health
+
+# Capabilities (auth required)
+curl https://whisper.amplab.co.uk/api/v1/capabilities \
   -H "Authorization: Bearer <WHISPER_SERVER_API_KEY>" \
-  -H "CF-Access-Client-Id: <CF_ACCESS_CLIENT_ID>" \
-  -H "CF-Access-Client-Secret: <CF_ACCESS_CLIENT_SECRET>"
+  -H "CF-Access-Client-Id: <CLIENT_ID>" \
+  -H "CF-Access-Client-Secret: <CLIENT_SECRET>"
 ```
 
-### 6. Team Integration (Test/Prod)
+**Windows (PowerShell):**
+```powershell
+Invoke-RestMethod https://whisper.amplab.co.uk/api/v1/health
+```
 
-For each teammate running the UI:
+### 7. Team Integration
 
-1. Copy `config/whisper_remote/env/ui.remote.env.example` to `.env`.
-2. Fill in test/prod URLs and secrets.
-3. Start UI with `./launch_ui.sh`.
+For each teammate:
+
+1. Copy `config/whisper_remote/env/ui.remote.env.example` to `.env` in their local repo copy.
+2. Fill in `WHISPER_SERVER_URL_TEST`, `WHISPER_REMOTE_API_KEY`, and the CF Access token values.
+3. Start the UI: `./launch_ui.sh` (macOS/Linux) or `streamlit run app.py` (Windows).
 4. In **Custom Audio Processing → Transcribe**:
    - Backend: `Remote Whisper Server`
-   - Environment: `Test` or `Production`
-   - Click `Check Server Capabilities`.
+   - Environment: `Test`
+   - Click `Check Server Capabilities`
 
-The UI now supports environment-targeted endpoints and sends required auth headers automatically.
+The UI sends the auth headers automatically.

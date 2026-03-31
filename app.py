@@ -36,7 +36,9 @@ from src.audio_processing_utils import (
     save_transcription_checkpoint, load_transcription_checkpoint
 )
 from src.whisper_remote_client import (
+    DEFAULT_CPU_DEVICES,
     DEFAULT_WHISPER_MODELS,
+    check_health,
     fetch_whisper_capabilities,
     transcribe_audio_via_remote,
 )
@@ -150,9 +152,9 @@ def init_session_state():
         'processing_stage': None,
         'processing_error': None,
 
-        # Remote Whisper server configuration
-        'transcription_backend': 'local',
-        'whisper_environment': os.environ.get('WHISPER_TARGET_ENV', 'local'),
+        # Remote Whisper server configuration — default to remote when a URL is pre-configured
+        'transcription_backend': 'remote' if os.environ.get('WHISPER_SERVER_URL_TEST') or os.environ.get('WHISPER_SERVER_URL_PROD') else 'local',
+        'whisper_environment': os.environ.get('WHISPER_TARGET_ENV', 'test' if os.environ.get('WHISPER_SERVER_URL_TEST') else 'local'),
         'whisper_server_url_local': os.environ.get('WHISPER_SERVER_URL_LOCAL', 'http://localhost:8001'),
         'whisper_server_url_test': os.environ.get('WHISPER_SERVER_URL_TEST', ''),
         'whisper_server_url_staging': os.environ.get('WHISPER_SERVER_URL_STAGING', ''),
@@ -1195,12 +1197,12 @@ def main():
                 st.success(f"✓ Audio ready: {Path(ss.processed_audio_path).name}")
 
                 backend_options = {
-                    "Local (This Machine)": "local",
                     "Remote Whisper Server": "remote",
+                    "Local (This Machine)": "local",
                 }
                 current_backend_label = next(
                     (label for label, value in backend_options.items() if value == ss.transcription_backend),
-                    "Local (This Machine)",
+                    "Remote Whisper Server",
                 )
 
                 selected_backend_label = st.radio(
@@ -1208,7 +1210,7 @@ def main():
                     list(backend_options.keys()),
                     index=list(backend_options.keys()).index(current_backend_label),
                     horizontal=True,
-                    help="Use local Whisper or send transcription to a remote Whisper server.",
+                    help="Remote uses the shared GPU server. Local runs Whisper on this machine.",
                 )
                 backend_mode = backend_options[selected_backend_label]
                 ss.transcription_backend = backend_mode
@@ -1216,73 +1218,70 @@ def main():
                 remote_capabilities = None
                 if backend_mode == "remote":
                     environment_labels = {
-                        "local": "Local",
+                        "local": "Local (localhost)",
                         "test": "Test",
                         "staging": "Staging",
                         "prod": "Production",
-                        "custom": "Custom",
+                        "custom": "Custom URL",
                     }
                     available_environments = [
                         env_name
-                        for env_name in ("local", "test", "staging", "prod")
+                        for env_name in ("test", "prod", "staging", "local")
                         if ss.get(f"whisper_server_url_{env_name}")
                     ]
                     if not available_environments:
-                        available_environments = ["local"]
+                        available_environments = []
                     available_environments.append("custom")
 
                     current_environment = ss.whisper_environment
                     if current_environment not in available_environments:
-                        current_environment = "custom"
+                        current_environment = available_environments[0]
 
                     selected_environment = st.selectbox(
-                        "Target Environment",
+                        "Environment",
                         available_environments,
                         index=available_environments.index(current_environment),
                         format_func=lambda env_name: environment_labels.get(env_name, env_name),
-                        help="Choose the shared remote endpoint for local/test/staging/prod.",
                     )
                     ss.whisper_environment = selected_environment
 
                     if selected_environment != "custom":
                         resolved_server_url = ss.get(f"whisper_server_url_{selected_environment}", "").strip()
-                        if not resolved_server_url:
-                            st.warning("No server URL configured for this environment.")
                         ss.whisper_server_url = resolved_server_url
 
                     server_url = st.text_input(
-                        "Whisper Server URL",
+                        "Server URL",
                         value=ss.whisper_server_url,
-                        help="Example: https://whisper-test.example.com",
+                        placeholder="https://whisper.amplab.co.uk",
                         disabled=selected_environment != "custom",
                     ).strip()
                     ss.whisper_server_url = server_url
 
-                    with st.expander("🔐 Remote Auth (Optional)", expanded=False):
-                        whisper_remote_api_key = st.text_input(
-                            "Whisper API Key",
-                            value=ss.whisper_remote_api_key,
-                            type="password",
-                            help="Sent as both Authorization: Bearer and X-API-Key headers.",
-                        ).strip()
+                    whisper_remote_api_key = st.text_input(
+                        "API Key",
+                        value=ss.whisper_remote_api_key,
+                        type="password",
+                        help="Set WHISPER_REMOTE_API_KEY in .env to pre-fill this.",
+                    ).strip()
+                    ss.whisper_remote_api_key = whisper_remote_api_key
+
+                    with st.expander("Cloudflare Access (Advanced)", expanded=False):
                         whisper_cf_access_client_id = st.text_input(
-                            "Cloudflare Access Client ID",
+                            "CF-Access-Client-Id",
                             value=ss.whisper_cf_access_client_id,
                             type="password",
                         ).strip()
                         whisper_cf_access_client_secret = st.text_input(
-                            "Cloudflare Access Client Secret",
+                            "CF-Access-Client-Secret",
                             value=ss.whisper_cf_access_client_secret,
                             type="password",
                         ).strip()
-
-                    ss.whisper_remote_api_key = whisper_remote_api_key
                     ss.whisper_cf_access_client_id = whisper_cf_access_client_id
                     ss.whisper_cf_access_client_secret = whisper_cf_access_client_secret
 
                     refresh_capabilities = st.button(
-                        "🔄 Check Server Capabilities",
-                        help="Fetch available models and devices from the remote Whisper service.",
+                        "Check Server",
+                        help="Test connectivity and fetch available models/devices.",
                     )
 
                     cached_capabilities = ss.get("whisper_server_capabilities")
@@ -1294,27 +1293,39 @@ def main():
                     )
 
                     if should_refresh and server_url:
-                        with st.spinner("Checking remote whisper server..."):
-                            remote_capabilities = fetch_whisper_capabilities(
-                                server_url,
-                                api_key=ss.whisper_remote_api_key,
-                                cf_access_client_id=ss.whisper_cf_access_client_id,
-                                cf_access_client_secret=ss.whisper_cf_access_client_secret,
-                            )
+                        with st.spinner(f"Connecting to {server_url} ..."):
+                            health = check_health(server_url)
+                            if not health["reachable"]:
+                                st.error(
+                                    f"**Cannot reach server**\n\n"
+                                    f"URL: `{server_url}`\n\n"
+                                    f"Error: {health['error']}\n\n"
+                                    f"Check that Docker is running on the server and port 8001 is accessible."
+                                )
+                                remote_capabilities = {"available": False, "error": health["error"], "models": DEFAULT_WHISPER_MODELS, "devices": DEFAULT_CPU_DEVICES, "gpu_available": False}
+                            else:
+                                remote_capabilities = fetch_whisper_capabilities(
+                                    server_url,
+                                    api_key=ss.whisper_remote_api_key,
+                                    cf_access_client_id=ss.whisper_cf_access_client_id,
+                                    cf_access_client_secret=ss.whisper_cf_access_client_secret,
+                                )
+                                if not remote_capabilities.get("available"):
+                                    err = remote_capabilities.get("error", "unknown")
+                                    st.error(
+                                        f"**Server reachable but capabilities failed**\n\n"
+                                        f"URL: `{server_url}`\n\n"
+                                        f"Error: {err}\n\n"
+                                        f"If this is a 401, check your API key matches `WHISPER_SERVER_API_KEY` on the server."
+                                    )
                         remote_capabilities["url"] = server_url
                         ss.whisper_server_capabilities = remote_capabilities
                     else:
                         remote_capabilities = cached_capabilities
 
-                    if isinstance(remote_capabilities, dict):
-                        if remote_capabilities.get("available"):
-                            gpu_text = "available" if remote_capabilities.get("gpu_available") else "not detected"
-                            st.success(f"Connected to remote server. GPU acceleration: {gpu_text}.")
-                        elif server_url:
-                            st.warning(
-                                "Remote server unavailable. Falling back to CPU-safe defaults. "
-                                f"Details: {remote_capabilities.get('error', 'unknown error')}"
-                            )
+                    if isinstance(remote_capabilities, dict) and remote_capabilities.get("available"):
+                        gpu_text = "GPU available" if remote_capabilities.get("gpu_available") else "CPU only"
+                        st.success(f"Connected — {gpu_text}")
 
                 model_options = DEFAULT_WHISPER_MODELS
                 device_options = ["auto", "cpu", "mps", "cuda"]

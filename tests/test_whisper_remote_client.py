@@ -61,6 +61,9 @@ def test_fetch_whisper_capabilities_returns_fallback_on_error(monkeypatch):
 
 
 def test_transcribe_audio_via_remote_posts_file_and_returns_transcription(monkeypatch, tmp_path):
+    monkeypatch.delenv("WHISPER_REMOTE_API_KEY", raising=False)
+    monkeypatch.delenv("WHISPER_CF_ACCESS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("WHISPER_CF_ACCESS_CLIENT_SECRET", raising=False)
     audio_path = tmp_path / "sample.wav"
     audio_path.write_bytes(b"fake-audio-bytes")
 
