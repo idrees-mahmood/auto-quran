@@ -19,7 +19,7 @@ services:
     depends_on:
       - whisper-service
     # TUNNEL_TOKEN is read from env_file by cloudflared automatically — no CLI substitution needed
-    command: tunnel --no-autoupdate run
+    command: tunnel --no-autoupdate run auto-quran-whisper
     env_file:
       - ./env/cloudflared.env
     networks:
