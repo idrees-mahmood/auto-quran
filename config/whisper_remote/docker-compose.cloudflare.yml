@@ -11,17 +11,19 @@ services:
     networks:
       - whisper_internal
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    depends_on:
-      - whisper-service
-    # $$TUNNEL_TOKEN is evaluated at container runtime (not by compose at parse time)
-    command: sh -c 'cloudflared tunnel --no-autoupdate run --token $$TUNNEL_TOKEN'
-    env_file:
-      - ./env/cloudflared.env
-    networks:
-      - whisper_internal
+  cloudflared:                                                                                                                                                   
+    image: cloudflare/cloudflared:latest                                                                                                                       
+    restart: unless-stopped                                               
+    depends_on:                                          
+      - whisper-service                                                                                                                                          
+    command: tunnel --no-autoupdate run                                                                                                                          
+    environment:                                                                                                                                                 
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN}"                                                                                                                            
+    env_file:                                                                                                                                                  
+      - ./env/cloudflared.env                                                                                                                                    
+    networks:                                                                                                                                                    
+      - whisper_internal                                                                                                                                         
+                             
 
 networks:
   whisper_internal:
