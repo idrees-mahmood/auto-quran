@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
 import tempfile
@@ -16,8 +17,9 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 WHISPER_MODELS = ["tiny", "base", "small", "medium", "large", "turbo"]
+ALLOWED_ENGINES = {"openai-whisper", "whisperx"}
 
-_TRANSCRIBER_CACHE: Dict[Tuple[str, str], WhisperTranscriber] = {}
+_TRANSCRIBER_CACHE: Dict[Tuple[str, str, str], WhisperTranscriber] = {}
 _CACHE_LOCK = threading.Lock()
 
 
@@ -106,14 +108,16 @@ def detect_available_devices() -> Tuple[list[str], bool]:
     return devices, gpu_available
 
 
-def get_transcriber(model_name: str, requested_device: str) -> WhisperTranscriber:
+def get_transcriber(model_name: str, requested_device: str, engine: str = "openai-whisper") -> WhisperTranscriber:
     """Reuse loaded transcribers to avoid repeated model load overhead."""
-    key = (model_name, requested_device)
+    key = (model_name, requested_device, engine)
 
     with _CACHE_LOCK:
         transcriber = _TRANSCRIBER_CACHE.get(key)
         if transcriber is None:
-            transcriber = WhisperTranscriber(model_name=model_name, device=requested_device)
+            transcriber = WhisperTranscriber(
+                model_name=model_name, device=requested_device, engine=engine
+            )
             _TRANSCRIBER_CACHE[key] = transcriber
 
     return transcriber
@@ -151,6 +155,10 @@ def create_app():
             return jsonify(payload), status
 
         devices, gpu_available = detect_available_devices()
+        engines = ["openai-whisper"]
+        if importlib.util.find_spec("whisperx") is not None:
+            engines.append("whisperx")
+
         return jsonify(
             {
                 "success": True,
@@ -158,6 +166,7 @@ def create_app():
                     "models": WHISPER_MODELS,
                     "devices": devices,
                     "gpu_available": gpu_available,
+                    "engines": engines,
                 },
             }
         )
@@ -183,8 +192,22 @@ def create_app():
 
         model_name = request.form.get("model", "base")
         requested_device = request.form.get("device", "auto")
+        engine = request.form.get("engine", "openai-whisper")
         language = request.form.get("language", "ar")
         word_timestamps = _parse_bool(request.form.get("word_timestamps"), default=True)
+
+        if engine not in ALLOWED_ENGINES:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": {
+                            "message": f"Unsupported engine '{engine}'. Allowed: {', '.join(sorted(ALLOWED_ENGINES))}"
+                        },
+                    }
+                ),
+                400,
+            )
 
         if model_name not in WHISPER_MODELS:
             return (
@@ -210,7 +233,7 @@ def create_app():
                 audio_file.save(temp_file)
                 temp_file_path = temp_file.name
 
-            transcriber = get_transcriber(model_name, requested_device)
+            transcriber = get_transcriber(model_name, requested_device, engine)
             transcription = transcriber.transcribe(
                 temp_file_path,
                 language=language,
