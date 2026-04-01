@@ -164,6 +164,7 @@ def init_session_state():
         'whisper_cf_access_client_id': os.environ.get('WHISPER_CF_ACCESS_CLIENT_ID', ''),
         'whisper_cf_access_client_secret': os.environ.get('WHISPER_CF_ACCESS_CLIENT_SECRET', ''),
         'whisper_server_capabilities': None,
+        'transcription_engine': 'openai-whisper',
     }
     
     for key, value in defaults.items():
@@ -522,7 +523,8 @@ def transcribe_audio_workflow(
     device: str,
     output_dir: str,
     progress_bar,
-    status_text
+    status_text,
+    engine: str = "openai-whisper",
 ) -> Optional[Dict]:
     """
     Execute Whisper transcription with progress tracking.
@@ -553,7 +555,7 @@ def transcribe_audio_workflow(
         status_text.text(f"⏳ Loading Whisper model '{model_name}'...")
         progress_bar.progress(0.1)
         
-        transcriber = WhisperTranscriber(model_name=model_name, device=device)
+        transcriber = WhisperTranscriber(model_name=model_name, device=device, engine=engine)
         
         # Transcribe
         status_text.text("⏳ Transcribing audio (this may take several minutes)...")
@@ -1335,6 +1337,22 @@ def main():
                         model_options = remote_capabilities.get("models") or DEFAULT_WHISPER_MODELS
                         device_options = remote_capabilities.get("devices") or ["auto", "cpu"]
 
+                # Derive available engines from capabilities (remote) or local importlib check (local)
+                import importlib.util as _ilu
+                _DEFAULT_ENGINES = ["openai-whisper"]
+                engine_options = _DEFAULT_ENGINES[:]
+                if backend_mode == "remote":
+                    _remote_caps = ss.get("whisper_server_capabilities")
+                    if isinstance(_remote_caps, dict):
+                        engine_options = _remote_caps.get("engines") or _DEFAULT_ENGINES
+                else:
+                    if _ilu.find_spec("whisperx") is not None:
+                        engine_options = ["openai-whisper", "whisperx"]
+
+                current_engine = ss.get("transcription_engine", "openai-whisper")
+                if current_engine not in engine_options:
+                    current_engine = engine_options[0]
+
                 model_default = "base" if "base" in model_options else model_options[0]
                 device_default = "auto" if "auto" in device_options else device_options[0]
                 
@@ -1373,7 +1391,19 @@ def main():
                     - mps: Apple Silicon (M1/M2/M3)
                     - cuda: NVIDIA GPU
                     """)
-                
+
+                whisper_engine = st.selectbox(
+                    "Transcription Engine",
+                    engine_options,
+                    index=engine_options.index(current_engine),
+                    help=(
+                        "openai-whisper: standard Whisper inference. "
+                        "whisperx: batched faster-whisper + wav2vec2 forced alignment "
+                        "(higher accuracy, faster on GPU)."
+                    ),
+                )
+                ss.transcription_engine = whisper_engine
+
                 if st.button("🎤 Start Transcription", type="primary", use_container_width=True):
                     progress_bar = st.progress(0)
                     status_text = st.empty()
@@ -1398,6 +1428,7 @@ def main():
                                     language="ar",
                                     word_timestamps=True,
                                     timeout_seconds=1800,
+                                    engine=whisper_engine,
                                     api_key=ss.whisper_remote_api_key,
                                     cf_access_client_id=ss.whisper_cf_access_client_id,
                                     cf_access_client_secret=ss.whisper_cf_access_client_secret,
@@ -1415,6 +1446,7 @@ def main():
                             audio_path=ss.processed_audio_path,
                             model_name=whisper_model,
                             device=device_option,
+                            engine=whisper_engine,
                             output_dir=output_dir,
                             progress_bar=progress_bar,
                             status_text=status_text
