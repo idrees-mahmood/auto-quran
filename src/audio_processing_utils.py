@@ -13,6 +13,7 @@ import json
 import re
 import ssl
 import hashlib
+import threading
 from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +52,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 _ALIGN_MODEL_CACHE: Dict[Tuple[str, str], Any] = {}
+_ALIGN_MODEL_CACHE_LOCK = threading.Lock()
 
 
 def _whisperx_compute_type(device: str) -> str:
@@ -63,14 +65,15 @@ def _whisperx_compute_type(device: str) -> str:
 def _get_align_model(language: str, device: str) -> Tuple[Any, Any]:
     """Return cached wav2vec2 alignment model, downloading on first call."""
     key = (language, device)
-    if key not in _ALIGN_MODEL_CACHE:
-        if _whisperx_lib is None:
-            raise ImportError("whisperx is not installed. Run: pip install whisperx")
-        model_a, metadata = _whisperx_lib.load_align_model(
-            language_code=language, device=device
-        )
-        _ALIGN_MODEL_CACHE[key] = (model_a, metadata)
-    return _ALIGN_MODEL_CACHE[key]
+    with _ALIGN_MODEL_CACHE_LOCK:
+        if key not in _ALIGN_MODEL_CACHE:
+            if _whisperx_lib is None:
+                raise ImportError("whisperx is not installed. Run: pip install whisperx")
+            model_a, metadata = _whisperx_lib.load_align_model(
+                language_code=language, device=device
+            )
+            _ALIGN_MODEL_CACHE[key] = (model_a, metadata)
+        return _ALIGN_MODEL_CACHE[key]
 
 
 # ============================================================================
@@ -399,6 +402,9 @@ class WhisperTranscriber:
     ) -> Dict[str, Any]:
         """
         Transcribe audio file. Delegates to openai-whisper or whisperx based on self.engine.
+
+        Note: For the 'whisperx' engine, word_timestamps is always True — whisperx
+        always produces forced-alignment word timestamps regardless of this parameter.
         """
         self.load_model()
 
