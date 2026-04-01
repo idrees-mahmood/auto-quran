@@ -28,6 +28,11 @@ try:
     from whisper.utils import get_writer
 except ImportError:
     whisper = None
+
+try:
+    import whisperx as _whisperx_lib
+except ImportError:
+    _whisperx_lib = None
     
 try:
     from pydub import AudioSegment
@@ -44,6 +49,29 @@ except ImportError:
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+_ALIGN_MODEL_CACHE: Dict[Tuple[str, str], Any] = {}
+
+
+def _whisperx_compute_type(device: str) -> str:
+    """Select CTranslate2 compute type based on device."""
+    if device in ("cuda", "mps"):
+        return "float16"
+    return "int8"
+
+
+def _get_align_model(language: str, device: str) -> Tuple[Any, Any]:
+    """Return cached wav2vec2 alignment model, downloading on first call."""
+    key = (language, device)
+    if key not in _ALIGN_MODEL_CACHE:
+        if _whisperx_lib is None:
+            raise ImportError("whisperx is not installed. Run: pip install whisperx")
+        model_a, metadata = _whisperx_lib.load_align_model(
+            language_code=language, device=device
+        )
+        _ALIGN_MODEL_CACHE[key] = (model_a, metadata)
+    return _ALIGN_MODEL_CACHE[key]
+
 
 # ============================================================================
 # Data Classes
@@ -271,26 +299,33 @@ class AudioPreprocessor:
 class WhisperTranscriber:
     """Handles Whisper transcription with word-level timestamps."""
     
-    def __init__(self, model_name: str = "turbo", device: str = "auto"):
+    def __init__(self, model_name: str = "turbo", device: str = "auto", engine: str = "openai-whisper"):
         """
         Initialize Whisper transcriber.
-        
+
         Args:
-            model_name: Whisper model size (tiny, base, small, medium, large)
+            model_name: Whisper model size (tiny, base, small, medium, large, turbo)
             device: Device to run on (cpu, cuda, mps, auto)
                    'auto' will detect best available device (MPS on M1/M2 Mac, CUDA on GPU, CPU fallback)
+            engine: Transcription engine ('openai-whisper' or 'whisperx')
         """
-        if whisper is None:
+        if engine not in ("openai-whisper", "whisperx"):
+            raise ValueError(f"Unknown engine '{engine}'. Use 'openai-whisper' or 'whisperx'.")
+
+        if engine == "openai-whisper" and whisper is None:
             raise ImportError(
                 "OpenAI Whisper is required. Install with: pip install openai-whisper\n"
-                "For better performance, consider: pip install faster-whisper"
+                "For better performance, consider: pip install whisperx"
             )
-        
+
         self.model_name = model_name
+        self.engine = engine
         self.device = self._detect_device(device)
         self.model = None
-        
-        logger.info(f"Initializing Whisper model: {model_name} on device: {self.device}")
+
+        logger.info(
+            f"Initializing Whisper model: {model_name} on device: {self.device} (engine: {engine})"
+        )
     
     def _detect_device(self, device: str) -> str:
         """
@@ -328,14 +363,27 @@ class WhisperTranscriber:
         return "cpu"
     
     def load_model(self):
-        """Load the Whisper model (lazy loading with MPS fallback)."""
-        if self.model is None:
+        """Load the model (lazy loading). Branches on self.engine."""
+        if self.model is not None:
+            return
+
+        if self.engine == "whisperx":
+            if _whisperx_lib is None:
+                raise ImportError("whisperx is not installed. Run: pip install whisperx")
+            compute_type = _whisperx_compute_type(self.device)
+            self.model = _whisperx_lib.load_model(
+                self.model_name, self.device, compute_type=compute_type
+            )
+            logger.info(
+                f"WhisperX model loaded: {self.model_name} on {self.device} ({compute_type})"
+            )
+        else:
             try:
                 self.model = whisper.load_model(self.model_name, device=self.device)
                 logger.info(f"Whisper model loaded: {self.model_name} on {self.device}")
-            except (NotImplementedError, RuntimeError) as e:
+            except (NotImplementedError, RuntimeError):
                 if self.device == "mps":
-                    logger.warning(f"MPS not supported for this model, falling back to CPU")
+                    logger.warning("MPS not supported for this model, falling back to CPU")
                     self.device = "cpu"
                     self.model = whisper.load_model(self.model_name, device="cpu")
                     logger.info(f"Whisper model loaded: {self.model_name} on CPU")
@@ -350,37 +398,58 @@ class WhisperTranscriber:
         save_json: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Transcribe audio file with word-level timestamps.
-        
-        Args:
-            audio_path: Path to audio file
-            language: Language code (ar for Arabic)
-            word_timestamps: Whether to extract word-level timestamps
-            save_json: Optional path to save raw transcription JSON
-            
-        Returns:
-            Transcription result with segments and word-level timing
+        Transcribe audio file. Delegates to openai-whisper or whisperx based on self.engine.
         """
         self.load_model()
-        
+
         logger.info(f"Transcribing audio: {audio_path}")
-        logger.info(f"Language: {language}, Word timestamps: {word_timestamps}")
-        
-        # Transcribe with Whisper
-        result = self.model.transcribe(
-            audio_path,
-            language=language,
-            word_timestamps=word_timestamps,
-            verbose=False
+        logger.info(
+            f"Language: {language}, Word timestamps: {word_timestamps}, Engine: {self.engine}"
         )
-        
-        # Save raw transcription if requested
+
+        if self.engine == "whisperx":
+            result = self._transcribe_whisperx(audio_path, language)
+        else:
+            result = self.model.transcribe(
+                audio_path,
+                language=language,
+                word_timestamps=word_timestamps,
+                verbose=False,
+            )
+
         if save_json:
             os.makedirs(os.path.dirname(save_json), exist_ok=True)
-            with open(save_json, 'w', encoding='utf-8') as f:
+            with open(save_json, "w", encoding="utf-8") as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
             logger.info(f"Raw transcription saved to: {save_json}")
-        
+
+        return result
+
+    def _transcribe_whisperx(self, audio_path: str, language: str) -> Dict[str, Any]:
+        """
+        Run the two-step whisperx pipeline:
+        1. Batched transcription via faster-whisper
+        2. Forced wav2vec2 alignment for precise word timestamps
+        Output is normalised so 'score' becomes 'probability' for downstream compatibility.
+        """
+        audio = _whisperx_lib.load_audio(audio_path)
+
+        result = self.model.transcribe(audio, batch_size=16, language=language)
+        detected_language = result.get("language", language)
+        logger.info(f"WhisperX transcription complete, detected language={detected_language}")
+
+        model_a, metadata = _get_align_model(detected_language, self.device)
+        result = _whisperx_lib.align(
+            result["segments"], model_a, metadata, audio, self.device, print_progress=False
+        )
+        logger.info("WhisperX forced alignment complete")
+
+        # Normalise: whisperx uses 'score', existing extract_word_timestamps() expects 'probability'
+        for segment in result.get("segments", []):
+            for word in segment.get("words", []):
+                if "score" in word and "probability" not in word:
+                    word["probability"] = word.pop("score")
+
         return result
     
     def extract_word_timestamps(self, transcription: Dict[str, Any]) -> List[TranscribedWord]:
