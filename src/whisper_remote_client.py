@@ -172,6 +172,7 @@ def transcribe_audio_via_remote(
     language: str = "ar",
     word_timestamps: bool = True,
     timeout_seconds: int = 1800,
+    engine: str = "openai-whisper",
     api_key: str | None = None,
     cf_access_client_id: str | None = None,
     cf_access_client_secret: str | None = None,
@@ -203,6 +204,7 @@ def transcribe_audio_via_remote(
             "device": device,
             "language": language,
             "word_timestamps": str(word_timestamps).lower(),
+            "engine": engine,
         }
 
         response = requests.post(

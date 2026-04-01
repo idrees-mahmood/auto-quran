@@ -103,6 +103,7 @@ def test_transcribe_audio_via_remote_posts_file_and_returns_transcription(monkey
     assert captured["data"]["device"] == "cuda"
     assert captured["data"]["language"] == "ar"
     assert captured["data"]["word_timestamps"] == "true"
+    assert captured["data"]["engine"] == "openai-whisper"
     assert captured["headers"] == {}
 
 
@@ -168,3 +169,32 @@ def test_fetch_whisper_capabilities_reads_auth_from_env(monkeypatch):
     assert captured["headers"]["Authorization"] == "Bearer env-api-key"
     assert captured["headers"]["CF-Access-Client-Id"] == "env-cf-id"
     assert captured["headers"]["CF-Access-Client-Secret"] == "env-cf-secret"
+
+
+def test_transcribe_audio_via_remote_forwards_engine(monkeypatch, tmp_path):
+    monkeypatch.delenv("WHISPER_REMOTE_API_KEY", raising=False)
+    monkeypatch.delenv("WHISPER_CF_ACCESS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("WHISPER_CF_ACCESS_CLIENT_SECRET", raising=False)
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"fake-audio-bytes")
+
+    captured = {}
+
+    def fake_post(url, files, data, headers, timeout):
+        captured["data"] = dict(data)
+        return DummyResponse(
+            {"success": True, "transcription": {"text": "ok", "segments": []}}
+        )
+
+    monkeypatch.setattr("src.whisper_remote_client.requests.post", fake_post)
+
+    from src.whisper_remote_client import transcribe_audio_via_remote
+    transcribe_audio_via_remote(
+        base_url="http://whisper.local:9000",
+        audio_path=str(audio_path),
+        model_name="turbo",
+        device="cuda",
+        engine="whisperx",
+    )
+
+    assert captured["data"]["engine"] == "whisperx"
