@@ -4,10 +4,17 @@ services:
       context: ../..
       dockerfile: src/whisper_service/Dockerfile
       args:
-        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-}
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu124}
     restart: unless-stopped
     env_file:
       - ./env/whisper-service.env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     networks:
       - whisper_internal
 
