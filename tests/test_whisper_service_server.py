@@ -116,53 +116,29 @@ def test_capabilities_includes_openai_whisper_always(app):
     assert "openai-whisper" in data["capabilities"]["engines"]
 
 
-def test_capabilities_includes_whisperx_when_installed(monkeypatch):
+def test_capabilities_includes_whisperx_when_installed(app, monkeypatch):
     import importlib.util as ilu
     original = ilu.find_spec
     monkeypatch.setattr(ilu, "find_spec", lambda name: MagicMock() if name == "whisperx" else original(name))
-
-    with patch("src.whisper_service.server.detect_available_devices") as mock_detect:
-        mock_detect.return_value = (["auto", "cpu", "cuda"], True)
-        from src.whisper_service import server
-        import importlib
-        importlib.reload(server)
-        app = server.create_app()
-
     with app.test_client() as client:
         resp = client.get("/api/v1/capabilities")
     data = resp.get_json()
     assert "whisperx" in data["capabilities"]["engines"]
 
 
-def test_capabilities_excludes_whisperx_when_not_installed(monkeypatch):
+def test_capabilities_excludes_whisperx_when_not_installed(app, monkeypatch):
     import importlib.util as ilu
     original = ilu.find_spec
     monkeypatch.setattr(ilu, "find_spec", lambda name: None if name == "whisperx" else original(name))
-
-    with patch("src.whisper_service.server.detect_available_devices") as mock_detect:
-        mock_detect.return_value = (["auto", "cpu"], False)
-        from src.whisper_service import server
-        import importlib
-        importlib.reload(server)
-        app = server.create_app()
-
     with app.test_client() as client:
         resp = client.get("/api/v1/capabilities")
     data = resp.get_json()
     assert "whisperx" not in data["capabilities"]["engines"]
 
 
-def test_transcribe_file_rejects_unknown_engine(tmp_path):
-    with patch("src.whisper_service.server.detect_available_devices") as mock_detect:
-        mock_detect.return_value = (["auto", "cpu"], False)
-        from src.whisper_service import server
-        import importlib
-        importlib.reload(server)
-        app = server.create_app()
-
+def test_transcribe_file_rejects_unknown_engine(app, tmp_path):
     audio = tmp_path / "test.wav"
     audio.write_bytes(b"fake")
-
     with app.test_client() as client:
         resp = client.post(
             "/api/v1/transcribe-file",
