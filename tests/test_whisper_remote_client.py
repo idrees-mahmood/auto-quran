@@ -32,6 +32,7 @@ def test_fetch_whisper_capabilities_success(monkeypatch):
                     "models": ["base", "turbo"],
                     "devices": ["auto", "cpu", "cuda"],
                     "gpu_available": True,
+                    "engines": ["openai-whisper", "whisperx"],
                 },
             }
         )
@@ -44,6 +45,7 @@ def test_fetch_whisper_capabilities_success(monkeypatch):
     assert capabilities["models"] == ["base", "turbo"]
     assert capabilities["devices"] == ["auto", "cpu", "cuda"]
     assert capabilities["gpu_available"] is True
+    assert capabilities["engines"] == ["openai-whisper", "whisperx"]
 
 
 def test_fetch_whisper_capabilities_returns_fallback_on_error(monkeypatch):

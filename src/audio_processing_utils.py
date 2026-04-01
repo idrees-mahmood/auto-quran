@@ -450,6 +450,9 @@ class WhisperTranscriber:
         )
         logger.info("WhisperX forced alignment complete")
 
+        # Re-add language key (whisperx.align output omits it; openai-whisper always includes it)
+        result["language"] = detected_language
+
         # Normalise: whisperx uses 'score', existing extract_word_timestamps() expects 'probability'
         for segment in result.get("segments", []):
             for word in segment.get("words", []):

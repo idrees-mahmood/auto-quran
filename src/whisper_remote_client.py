@@ -152,6 +152,7 @@ def fetch_whisper_capabilities(
             "gpu_available": bool(
                 capabilities.get("gpu_available", any(d in devices for d in ("cuda", "mps")))
             ),
+            "engines": capabilities.get("engines", ["openai-whisper"]),
         }
         logger.info(
             "Capabilities: models=%s devices=%s gpu=%s",
